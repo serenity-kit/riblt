@@ -26,7 +26,7 @@ Date: 2026-02-03
    - Define TypeScript types for internal cells and messages.
 
 3) **Hashing & Encoding Utilities**
-   - Choose deterministic 128-bit hash (or configurable function).
+   - Vendor a local XXH3-128 implementation (ported from `xxh3-ts`) to avoid external runtime deps.
    - Implement string->bytes encoding (UTF-8).
    - Implement field ops / XOR ops needed by RIBLT.
 
@@ -57,6 +57,6 @@ Date: 2026-02-03
 
 ## Open Questions
 Resolved decisions:
-- **Default hash:** Use `xxh3-ts` with `Buffer` for XXH3-128 by default; expose `hash` override for portability. Deterministic output is required for cross-language interop.
+- **Default hash:** Vendor a local XXH3-128 implementation (ported from `xxh3-ts`) under `src/utils/xxh3.ts` and use it by default; expose `hash` override for portability. Deterministic output is required for cross-language interop.
 - **Serialization:** Default to compact binary (`Uint8Array`) for transport efficiency; also expose a JSON-friendly POJO format for easy debugging and non-binary transports.
 - **Parameter tuning:** Expose `expectedDiff` and `errorRate` in `createRiblt(options)` with sensible defaults; also allow advanced users to pass explicit `cells`, `hashes`, and `seed` to match other implementations.

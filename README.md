@@ -30,3 +30,4 @@ console.log("extra", result.extra);     // => ["bob-only"]
 - The default `symbolSize` is 64 bytes, so IDs longer than 60 bytes will throw.
 - `encode()` returns a binary `Uint8Array` by default; use `encode({ format: "object" })` for JSON-friendly payloads.
 - Both peers must use the same `symbolSize` and `hashSeed`.
+- The package is ESM-only and isomorphic (Node + browser) with a vendored XXH3-128 implementation.
