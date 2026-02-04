@@ -19,6 +19,7 @@
     "build": "tsup src/index.ts src/doc-uuid256.ts src/uuid.ts --dts --format esm,cjs --clean",
     "test": "vitest run",
     "test:watch": "vitest",
+    "bench": "vitest bench",
     "lint": "tsc --noEmit",
     "prepare": "pnpm build"
   },
@@ -34,9 +35,14 @@
     "url": "git+https://example.com/your/repo.git"
   },
   "devDependencies": {
+    "@esbuild/darwin-x64": "^0.27.2",
+    "@rollup/rollup-darwin-x64": "^4.57.1",
     "@types/node": "^25.2.0",
     "tsup": "^8.5.1",
     "typescript": "^5.9.3",
     "vitest": "^4.0.18"
+  },
+  "dependencies": {
+    "xxh3-ts": "^2.0.1"
   }
 }
