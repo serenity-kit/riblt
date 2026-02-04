@@ -1,17 +1,27 @@
-import { XXH3_128 } from "./utils/xxh3.js";
-
-const textEncoder = new TextEncoder();
-const textDecoder = new TextDecoder();
-
-const LENGTH_BYTES = 4;
-const DEFAULT_SYMBOL_SIZE = 64;
-const DEFAULT_BATCH_SIZE = 1;
-const HASH_ID = "xxh3-128" as const;
-const VERSION = 1 as const;
-const MASK_64 = (1n << 64n) - 1n;
-const MASK_128 = (1n << 128n) - 1n;
-const UINT32_FLOAT = 2 ** 32;
-const RANDOM_MAPPING_MULTIPLIER = 0xda942042e4dd58b5n;
+import {
+  DEFAULT_BATCH_SIZE,
+  DEFAULT_SYMBOL_SIZE,
+  HASH_ID,
+  LENGTH_BYTES,
+  MASK_64,
+  RANDOM_MAPPING_MULTIPLIER,
+  UINT32_FLOAT,
+  VERSION,
+} from "./constants.js";
+import { base64ToBytes, bytesToBase64 } from "./utils/base64.js";
+import { decodeStringSymbol, encodeStringSymbol } from "./utils/encoding.js";
+import {
+  hashFromBytesLE,
+  hashFromHex,
+  hashSymbol,
+  hashToBytesLE,
+  hashToHex,
+  readUint64LE,
+  seedFromHash,
+  seedFromHex,
+  seedToHex,
+  writeUint64LE,
+} from "./utils/hash.js";
 
 export type RibltStatus = "complete" | "incomplete" | "failed";
 
@@ -383,38 +393,6 @@ function estimateBatchSize(expectedDiff?: number, errorRate?: number): number {
   return Math.max(DEFAULT_BATCH_SIZE, base + safety);
 }
 
-function encodeStringSymbol(value: string, symbolSize: number): Uint8Array {
-  const bytes = textEncoder.encode(value);
-  if (bytes.length > symbolSize - LENGTH_BYTES) {
-    throw new Error("symbolSize too small for id");
-  }
-  const buffer = new Uint8Array(symbolSize);
-  const view = new DataView(buffer.buffer, buffer.byteOffset, buffer.byteLength);
-  view.setUint32(0, bytes.length, true);
-  buffer.set(bytes, LENGTH_BYTES);
-  return buffer;
-}
-
-function decodeStringSymbol(symbol: Uint8Array): string {
-  if (symbol.length < LENGTH_BYTES) {
-    throw new Error("symbol too small to decode");
-  }
-  const view = new DataView(symbol.buffer, symbol.byteOffset, symbol.byteLength);
-  const length = view.getUint32(0, true);
-  if (length > symbol.length - LENGTH_BYTES) {
-    throw new Error("invalid symbol length prefix");
-  }
-  return textDecoder.decode(symbol.slice(LENGTH_BYTES, LENGTH_BYTES + length));
-}
-
-function hashSymbol(symbol: Uint8Array, seed: bigint): bigint {
-  return XXH3_128(symbol, seed) & MASK_128;
-}
-
-function seedFromHash(hash: bigint): bigint {
-  return hash & MASK_64;
-}
-
 function createEmptyCodedSymbol(symbolSize: number): CodedSymbol {
   return { symbol: new Uint8Array(symbolSize), hash: 0n, count: 0 };
 }
@@ -543,130 +521,4 @@ function decodeMessageBinary(message: Uint8Array): {
   }
 
   return { symbolSize, seed, codedSymbols };
-}
-
-const BASE64_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-const BASE64_LOOKUP = (() => {
-  const table = new Uint8Array(128);
-  table.fill(255);
-  for (let i = 0; i < BASE64_ALPHABET.length; i += 1) {
-    table[BASE64_ALPHABET.charCodeAt(i)] = i;
-  }
-  return table;
-})();
-
-function bytesToBase64(bytes: Uint8Array): string {
-  let output = "";
-  for (let i = 0; i < bytes.length; i += 3) {
-    const b0 = bytes[i] ?? 0;
-    const b1 = bytes[i + 1] ?? 0;
-    const b2 = bytes[i + 2] ?? 0;
-    const triplet = (b0 << 16) | (b1 << 8) | b2;
-    output += BASE64_ALPHABET[(triplet >> 18) & 63];
-    output += BASE64_ALPHABET[(triplet >> 12) & 63];
-    output += i + 1 < bytes.length ? BASE64_ALPHABET[(triplet >> 6) & 63] : "=";
-    output += i + 2 < bytes.length ? BASE64_ALPHABET[triplet & 63] : "=";
-  }
-  return output;
-}
-
-function base64ToBytes(base64: string, symbolSize: number): Uint8Array {
-  const normalized = base64.replace(/\s+/g, "");
-  if (normalized.length % 4 !== 0) {
-    throw new Error("invalid base64 length");
-  }
-  const padding = normalized.endsWith("==") ? 2 : normalized.endsWith("=") ? 1 : 0;
-  const outputLength = (normalized.length / 4) * 3 - padding;
-  if (outputLength !== symbolSize) {
-    throw new Error("symbol size mismatch");
-  }
-
-  const output = new Uint8Array(outputLength);
-  let outIndex = 0;
-  for (let i = 0; i < normalized.length; i += 4) {
-    const c0 = normalized.charCodeAt(i);
-    const c1 = normalized.charCodeAt(i + 1);
-    const c2 = normalized.charCodeAt(i + 2);
-    const c3 = normalized.charCodeAt(i + 3);
-
-    const v0 = BASE64_LOOKUP[c0] ?? 255;
-    const v1 = BASE64_LOOKUP[c1] ?? 255;
-    const v2 = c2 === 61 ? 0 : BASE64_LOOKUP[c2] ?? 255;
-    const v3 = c3 === 61 ? 0 : BASE64_LOOKUP[c3] ?? 255;
-
-    if (v0 === 255 || v1 === 255 || (c2 !== 61 && v2 === 255) || (c3 !== 61 && v3 === 255)) {
-      throw new Error("invalid base64 value");
-    }
-
-    const triplet = (v0 << 18) | (v1 << 12) | (v2 << 6) | v3;
-    if (outIndex < outputLength) {
-      output[outIndex] = (triplet >> 16) & 255;
-      outIndex += 1;
-    }
-    if (outIndex < outputLength) {
-      output[outIndex] = (triplet >> 8) & 255;
-      outIndex += 1;
-    }
-    if (outIndex < outputLength) {
-      output[outIndex] = triplet & 255;
-      outIndex += 1;
-    }
-  }
-
-  return output;
-}
-
-function hashToHex(hash: bigint): string {
-  return (hash & MASK_128).toString(16).padStart(32, "0");
-}
-
-function hashFromHex(hash: string): bigint {
-  const normalized = hash.startsWith("0x") ? hash.slice(2) : hash;
-  if (normalized.length > 32) {
-    throw new Error("invalid hash length");
-  }
-  return BigInt("0x" + normalized);
-}
-
-function seedToHex(seed: bigint): string {
-  return (seed & MASK_64).toString(16).padStart(16, "0");
-}
-
-function seedFromHex(seed: string): bigint {
-  const normalized = seed.startsWith("0x") ? seed.slice(2) : seed;
-  if (normalized.length > 16) {
-    throw new Error("invalid seed length");
-  }
-  return BigInt("0x" + normalized);
-}
-
-function hashToBytesLE(hash: bigint): Uint8Array {
-  const bytes = new Uint8Array(16);
-  const view = new DataView(bytes.buffer);
-  writeUint64LE(view, 0, hash & MASK_64);
-  writeUint64LE(view, 8, (hash >> 64n) & MASK_64);
-  return bytes;
-}
-
-function hashFromBytesLE(bytes: Uint8Array): bigint {
-  if (bytes.length !== 16) {
-    throw new Error("invalid hash length");
-  }
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  const low = readUint64LE(view, 0);
-  const high = readUint64LE(view, 8);
-  return (high << 64n) | low;
-}
-
-function writeUint64LE(view: DataView, offset: number, value: bigint): void {
-  const low = Number(value & 0xffffffffn);
-  const high = Number((value >> 32n) & 0xffffffffn);
-  view.setUint32(offset, low, true);
-  view.setUint32(offset + 4, high, true);
-}
-
-function readUint64LE(view: DataView, offset: number): bigint {
-  const low = BigInt(view.getUint32(offset, true));
-  const high = BigInt(view.getUint32(offset + 4, true));
-  return (high << 32n) | low;
 }

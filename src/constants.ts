@@ -1,0 +1,9 @@
+export const LENGTH_BYTES = 4;
+export const DEFAULT_SYMBOL_SIZE = 64;
+export const DEFAULT_BATCH_SIZE = 1;
+export const HASH_ID = "xxh3-128" as const;
+export const VERSION = 1 as const;
+export const MASK_64 = (1n << 64n) - 1n;
+export const MASK_128 = (1n << 128n) - 1n;
+export const UINT32_FLOAT = 2 ** 32;
+export const RANDOM_MAPPING_MULTIPLIER = 0xda942042e4dd58b5n;
