@@ -39,6 +39,14 @@ export interface RibltOptions {
   hashSeed?: bigint;
 }
 
+export interface ResolvedRibltOptions {
+  symbolSize: number;
+  expectedDiff?: number;
+  errorRate?: number;
+  batchSize: number;
+  hashSeed: bigint;
+}
+
 export interface RibltMessage {
   v: typeof VERSION;
   hash: typeof HASH_ID;
@@ -52,6 +60,19 @@ export interface RibltCodedSymbolMessage {
   hash: string;
   symbol: string;
 }
+
+export interface RibltSessionApi {
+  add(ids: Iterable<string>): void;
+  encode(options?: { count?: number; format?: "binary" | "object" }): Uint8Array | RibltMessage;
+  merge(message: Uint8Array | RibltMessage): void;
+  decode(): RibltDecodeResult;
+  reset(): void;
+}
+
+export const RIBLT_DEFAULT_SYMBOL_SIZE = DEFAULT_SYMBOL_SIZE;
+export const RIBLT_DEFAULT_BATCH_SIZE = DEFAULT_BATCH_SIZE;
+export const RIBLT_MESSAGE_VERSION = VERSION;
+export const RIBLT_HASH_ID = HASH_ID;
 
 interface HashedSymbol {
   symbol: Uint8Array;
@@ -258,11 +279,26 @@ class Decoder {
   }
 }
 
-export function createRiblt(options: RibltOptions = {}) {
-  return new RibltSession(options);
+export function resolveRibltOptions(options: RibltOptions = {}): ResolvedRibltOptions {
+  const symbolSize = options.symbolSize ?? DEFAULT_SYMBOL_SIZE;
+  if (symbolSize <= LENGTH_BYTES) {
+    throw new Error("symbolSize must be larger than the length prefix");
+  }
+
+  return {
+    symbolSize,
+    expectedDiff: options.expectedDiff,
+    errorRate: options.errorRate,
+    batchSize: options.batchSize ?? estimateBatchSize(options.expectedDiff, options.errorRate),
+    hashSeed: options.hashSeed ?? 0n,
+  };
 }
 
-class RibltSession {
+export function createRiblt(options: RibltOptions = {}): RibltSessionApi {
+  return new RibltSession(resolveRibltOptions(options));
+}
+
+class RibltSession implements RibltSessionApi {
   private symbolSize: number;
   private hashSeed: bigint;
   private encoder: Encoder;
@@ -272,13 +308,10 @@ class RibltSession {
   private failed = false;
   private received = 0;
 
-  constructor(options: RibltOptions) {
-    this.symbolSize = options.symbolSize ?? DEFAULT_SYMBOL_SIZE;
-    if (this.symbolSize <= LENGTH_BYTES) {
-      throw new Error("symbolSize must be larger than the length prefix");
-    }
-    this.hashSeed = options.hashSeed ?? 0n;
-    this.batchSize = options.batchSize ?? estimateBatchSize(options.expectedDiff, options.errorRate);
+  constructor(options: ResolvedRibltOptions) {
+    this.symbolSize = options.symbolSize;
+    this.hashSeed = options.hashSeed;
+    this.batchSize = options.batchSize;
     this.encoder = new Encoder(this.symbolSize);
     this.decoder = new Decoder(this.symbolSize, this.hashSeed);
   }

@@ -1,0 +1,25 @@
+{
+  "name": "@riblt/setsync",
+  "version": "0.0.1",
+  "description": "A client/server set reconciliation protocol built on top of riblt.",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsup src/index.ts --dts --format esm --clean",
+    "test": "vitest run --config vitest.config.ts",
+    "test:watch": "vitest --config vitest.config.ts",
+    "lint": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "riblt": "workspace:*"
+  }
+}

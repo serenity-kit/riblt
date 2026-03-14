@@ -1,36 +1,11 @@
 {
-  "name": "riblt",
-  "version": "0.0.1",
-  "description": "Rateless Invertible Bloom Lookup Tables (RIBLT) in TypeScript; includes UUID+SHA256 document helpers.",
-  "license": "MIT",
-  "type": "module",
-  "exports": {
-    ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
-    }
-  },
-  "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
-  "sideEffects": false,
+  "name": "riblt-workspace",
+  "private": true,
   "scripts": {
-    "build": "tsup src/index.ts --dts --format esm --clean",
-    "test": "vitest run",
-    "test:watch": "vitest",
-    "bench": "vitest bench",
-    "lint": "tsc --noEmit",
-    "prepare": "pnpm build"
-  },
-  "keywords": [
-    "riblt",
-    "iblt",
-    "set reconciliation",
-    "sync"
-  ],
-  "author": "Naisho GmbH",
-  "repository": {
-    "type": "git",
-    "url": "git+https://example.com/your/repo.git"
+    "build": "pnpm -r --filter './packages/*' build && pnpm --filter browser-server-example build",
+    "test": "pnpm -r --filter './packages/*' test",
+    "lint": "pnpm -r --filter './packages/*' lint && pnpm --filter browser-server-example lint",
+    "example": "pnpm --filter browser-server-example start"
   },
   "devDependencies": {
     "@esbuild/darwin-x64": "^0.27.2",

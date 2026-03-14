@@ -1,0 +1,34 @@
+{
+  "name": "riblt",
+  "version": "0.0.1",
+  "description": "Rateless Invertible Bloom Lookup Tables (RIBLT) in TypeScript.",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsup src/index.ts --dts --format esm --clean",
+    "test": "vitest run --config vitest.config.ts",
+    "test:watch": "vitest --config vitest.config.ts",
+    "bench": "vitest bench --config vitest.config.ts",
+    "lint": "tsc -p tsconfig.json --noEmit"
+  },
+  "keywords": [
+    "riblt",
+    "iblt",
+    "set reconciliation",
+    "sync"
+  ],
+  "author": "Naisho GmbH",
+  "repository": {
+    "type": "git",
+    "url": "git+https://example.com/your/repo.git"
+  }
+}
