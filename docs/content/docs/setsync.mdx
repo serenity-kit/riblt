@@ -1,0 +1,157 @@
+---
+title: set-sync
+description: A protocol layer that uses riblt under the hood.
+---
+
+`set-sync` is the session protocol that sits on top of `riblt`. It handles handshake, parameter negotiation, session identity, and multi-round message exchange while delegating the actual reconciliation work to `riblt`.
+
+## Installation
+
+```sh
+pnpm add @riblt/setsync
+```
+
+## Why It Exists
+
+`riblt` gives you the primitives. `set-sync` gives you a workflow:
+
+- session ids
+- protocol versioning
+- parameter normalization
+- explicit handshake
+- request/response style sync rounds
+
+That makes it a better fit for browser-to-server communication.
+
+## Basic Example
+
+```ts
+import { createSetSyncPeer, createSetSyncPeerFromHello } from "@riblt/setsync";
+
+const client = createSetSyncPeer({
+  ids: ["id-1", "id-2", "client-only"],
+  sessionId: "demo-session",
+  parameters: { symbolSize: 64, hashSeed: 0n, batchSize: 2 },
+});
+
+const hello = client.createHello();
+
+const server = createSetSyncPeerFromHello({
+  ids: ["id-1", "id-2", "server-only"],
+  hello,
+});
+
+client.receiveHelloAck(server.receiveHello(hello));
+
+let done = false;
+while (!done) {
+  const response = server.respondToSync(client.createSyncMessage());
+  const state = client.receiveSyncResponse(response);
+  done = state.done;
+
+  if (done) {
+    console.log(state.local.missing); // ["server-only"]
+    console.log(state.local.extra);   // ["client-only"]
+  }
+}
+```
+
+## Main Concepts
+
+### Peer
+
+A `SetSyncPeer` owns:
+
+- a session id
+- normalized reconciliation parameters
+- a local `riblt` instance
+- handshake state
+- sync round count
+
+### Parameters
+
+`normalizeSetSyncParameters()` converts `riblt` options into the protocol representation:
+
+```ts
+{
+  symbolSize: 64,
+  batchSize: 29,
+  hashSeed: "0000000000000007"
+}
+```
+
+The hash seed is encoded as a fixed-width hex string so it can be transported safely in JSON.
+
+## Protocol Messages
+
+### `setsync/hello`
+
+Sent by the initiating peer. Contains:
+
+- protocol version
+- session id
+- normalized parameters
+
+### `setsync/hello-ack`
+
+Returned by the receiving peer after validating:
+
+- matching session id
+- matching protocol version
+- matching parameters
+
+### `setsync/sync`
+
+Carries one object-format `riblt` frame for the current round.
+
+### `setsync/sync-response`
+
+Carries:
+
+- the receiver's next `riblt` frame
+- that receiver's current decode result
+- a `done` flag
+- the observed round count
+
+## Handshake Rules
+
+You must complete the handshake before calling:
+
+- `createSyncMessage()`
+- `receiveSyncMessage()`
+- `respondToSync()`
+- `receiveSyncResponse()`
+
+If the parameters do not match, the peer throws a parameter mismatch error.
+
+## API Summary
+
+### Constructors and helpers
+
+- `createSetSyncPeer(options)`
+- `createSetSyncPeerFromHello({ ids, hello })`
+- `createSetSyncSessionId()`
+- `normalizeSetSyncParameters(options)`
+- `setSyncParametersToRibltOptions(parameters)`
+
+### `SetSyncPeer` methods
+
+- `getSessionId()`
+- `getParameters()`
+- `getResult()`
+- `createHello()`
+- `receiveHello(message)`
+- `receiveHelloAck(message)`
+- `createSyncMessage({ count? })`
+- `receiveSyncMessage(message)`
+- `respondToSync(message, { count? })`
+- `receiveSyncResponse(message)`
+
+## Relationship To riblt
+
+`set-sync` does not replace `riblt`. It wraps it.
+
+- `riblt` is responsible for coded symbol generation, merging, and diff decoding.
+- `set-sync` is responsible for transport-safe message structure and peer/session coordination.
+
+If you already have your own protocol, use `riblt` directly. If you want a ready-made protocol for browser/server set reconciliation, use `set-sync`.

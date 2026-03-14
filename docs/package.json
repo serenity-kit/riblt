@@ -1,12 +1,12 @@
 {
-  "name": "setsync",
+  "name": "riblt-docs",
   "version": "0.0.0",
   "private": true,
   "scripts": {
     "build": "next build",
     "dev": "next dev",
     "start": "next start",
-    "types:check": "fumadocs-mdx && next typegen && tsc --noEmit",
+    "types:check": "fumadocs-mdx && tsc --noEmit",
     "postinstall": "fumadocs-mdx"
   },
   "dependencies": {
@@ -29,5 +29,10 @@
     "postcss": "^8.5.8",
     "tailwindcss": "^4.2.1",
     "typescript": "^5.9.3"
+  },
+  "pnpm": {
+    "overrides": {
+      "esbuild": "0.27.2"
+    }
   }
 }

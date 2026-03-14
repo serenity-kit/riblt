@@ -3,7 +3,11 @@ import { notFound } from 'next/navigation';
 
 export const revalidate = false;
 
-export async function GET(_req: Request, { params }: RouteContext<'/llms.mdx/docs/[[...slug]]'>) {
+interface RouteProps {
+  params: Promise<{ slug?: string[] }>;
+}
+
+export async function GET(_req: Request, { params }: RouteProps) {
   const { slug } = await params;
   const page = source.getPage(slug);
   if (!page) notFound();
