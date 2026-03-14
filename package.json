@@ -8,8 +8,6 @@
     "example": "pnpm --filter browser-server-example start"
   },
   "devDependencies": {
-    "@esbuild/darwin-x64": "^0.27.2",
-    "@rollup/rollup-darwin-x64": "^4.57.1",
     "@types/node": "^25.2.0",
     "tsup": "^8.5.1",
     "typescript": "^5.9.3",
