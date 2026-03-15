@@ -1,0 +1,24 @@
+---
+title: orp-demo
+description: A client-side ORP playground that simulates inventory reconciliation and per-document repair in the browser.
+---
+
+This page runs a browser-only ORP simulation. There is no server and no encryption layer here; the goal is to make the protocol flow inspectable.
+
+The demo uses:
+
+- a simple grow-only set CRDT
+- document summaries for inventory comparison
+- a flat repair flow for readability in the browser
+- simulated `riblt` frame exchange in the transcript
+- exact missing-op transfer during the repair phase
+
+The CLI example in `examples/orp-demo` shows the chunk-aware version of ORP, where deterministic hash buckets sit between document inventory and single-op repair.
+
+Try this flow:
+
+1. Add an operation to one peer.
+2. Click `Analyze inventory` to see which documents differ.
+3. Click `Run full ORP sync` to reconcile the peers and inspect the message transcript.
+
+<OrpPlayground />

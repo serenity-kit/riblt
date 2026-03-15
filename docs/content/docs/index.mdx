@@ -1,0 +1,40 @@
+---
+title: Overview
+description: riblt is the reconciliation engine; ORP is the higher-level protocol layer built on top of it.
+---
+
+This workspace is split into two layers:
+
+- `riblt`: a low-level TypeScript implementation of Rateless Invertible Bloom Lookup Tables.
+- `orp`: a document-scoped operation reconciliation protocol for opaque operations.
+
+Use `riblt` directly if you need raw sketch generation and merge/decode control. Use `orp` if you need document inventory plus per-document operation repair.
+
+## Packages
+
+<Cards>
+  <Card title="riblt" href="/docs/riblt" />
+  <Card title="orp" href="/docs/orp" />
+  <Card title="orp rfc" href="/docs/orp-rfc" />
+  <Card title="orp analysis" href="/docs/orp-analysis" />
+  <Card title="orp demo" href="/docs/orp-demo" />
+</Cards>
+
+## Workspace Layout
+
+```text
+packages/
+  riblt/      core reconciliation engine
+  orp/        operation reconciliation types and validators
+examples/
+  orp-demo/         standalone ORP demonstration
+docs/
+  content/docs/     this documentation site
+```
+
+## Typical Flow
+
+1. Each side starts with a local set of string identifiers.
+2. `riblt` turns that set into coded symbols that can be streamed incrementally.
+3. `orp` applies the reconciliation primitive to document inventories and then to operation ids for differing documents.
+4. Both sides keep exchanging frames until the diff can be decoded.

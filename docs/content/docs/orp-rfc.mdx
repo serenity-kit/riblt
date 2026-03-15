@@ -1,0 +1,300 @@
+---
+title: operation-reconciliation-protocol-rfc
+description: RFC-style specification for the Operation Reconciliation Protocol.
+---
+
+# RFC: Operation Reconciliation Protocol
+
+## Status
+
+This document describes version `1` of the Operation Reconciliation Protocol (`ORP`). It is an implementation-oriented workspace specification.
+
+## Abstract
+
+ORP is a document-scoped anti-entropy protocol for reconciling opaque operations between peers. It is designed for systems where:
+
+- documents are independently addressable
+- operation payloads may be opaque to the sync layer
+- the transport needs exact repair without Merkle trees
+- peers want wire cost to scale with differences rather than total history
+
+ORP uses `riblt` frames in two stages:
+
+1. inventory reconciliation across document summaries
+2. optional chunk reconciliation across deterministic chunk summaries
+3. per-document reconciliation across operation ids
+
+## Goals
+
+- Identify which visible documents differ across two peers.
+- Repair differing documents by discovering the exact missing operation ids.
+- Support an optional deterministic chunk layer for large unordered operation sets.
+- Support opaque operation payloads.
+- Avoid Merkle tree maintenance and changed-since-checkpoint feeds.
+- Keep the protocol independent of any particular CRDT implementation.
+
+## Non-Goals
+
+- Real-time broadcast or subscription semantics
+- Strict causal classification such as `behind` vs `concurrent`
+- Key exchange or cryptographic identity management
+- Hiding all metadata leakage
+
+## Terminology
+
+- `document`: an independently synchronized logical object
+- `operation`: a stable unit of CRDT state transfer
+- `blob`: the opaque payload for an operation or snapshot
+- `summary`: a compact per-document fingerprint
+- `chunk`: a deterministic partition of an unordered operation set
+- `scope`: the set of document handles visible to a peer for a session
+
+## Data Model
+
+Each document is represented by:
+
+- `docHandle`: opaque stable identifier
+- zero or one `basisSnapshotId`
+- zero or more `opId`s after the basis snapshot
+- zero or more optional deterministic chunks over those `opId`s
+
+A peer maintains a `DocSummary`:
+
+```ts
+type DocSummary = {
+  docHandle: string;
+  basisSnapshotId?: string;
+  tailCount: number;
+  xorA: string;
+  xorB: string;
+  sumA: string;
+  sumB: string;
+};
+```
+
+`xor*` and `sum*` are computed over the tail operation set. Two independent digest domains are recommended in order to make accidental summary collisions negligible in practice.
+
+The implementation derives a `summaryHash` from:
+
+- `docHandle`
+- `basisSnapshotId`
+- `tailCount`
+- `xorA`
+- `xorB`
+- `sumA`
+- `sumB`
+
+ORP may also derive `ChunkSummary` values using a deterministic unordered-op chunking strategy such as `hash-bucket/v1`. That strategy partitions operation ids by hash bucket rather than by causal history.
+
+## Wire Parameters
+
+An ORP session has two `riblt` parameter sets:
+
+```ts
+type OrpParameters = {
+  symbolSize: number;
+  batchSize: number;
+  hashSeed: string;
+};
+```
+
+- `inventoryParams` apply to document summary reconciliation.
+- `operationParams` apply to per-document operation reconciliation.
+
+`hashSeed` is encoded as a 16-character lowercase hex string.
+
+## Messages
+
+### `orp/hello`
+
+Starts the session and fixes the reconciliation scope.
+
+```ts
+type OrpHelloMessage = {
+  type: "orp/hello";
+  version: 1;
+  sessionId: string;
+  scopeId: string;
+  inventoryParams: OrpParameters;
+  operationParams: OrpParameters;
+};
+```
+
+### `orp/inventory-frame`
+
+Carries one object-format `riblt` frame for the set of `(docHandle, summaryHash)` entries.
+
+```ts
+type OrpInventoryFrameMessage = {
+  type: "orp/inventory-frame";
+  version: 1;
+  sessionId: string;
+  frame: RibltMessage;
+};
+```
+
+### `orp/inventory-done`
+
+Lists the exact set of differing documents once inventory decoding completes.
+
+```ts
+type OrpInventoryDoneMessage = {
+  type: "orp/inventory-done";
+  version: 1;
+  sessionId: string;
+  differingDocs: Array<{
+    docHandle: string;
+    localSummaryHash?: string;
+    remoteSummaryHash?: string;
+  }>;
+};
+```
+
+### `orp/doc-open`
+
+Starts repair for a single document.
+
+### `orp/doc-status`
+
+Advertises the current `DocSummary`, a bounded list of recent snapshots, and optional chunk summaries.
+
+### `orp/chunk-frame`
+
+Carries one object-format `riblt` frame for the set of `(chunkId, chunkSummaryHash)` entries for a document.
+
+### `orp/chunk-done`
+
+Lists the exact set of differing chunks for a document.
+
+### `orp/chunk-get`
+
+Requests one or more chunk blobs by `chunkId`.
+
+### `orp/chunk-put`
+
+Transfers one or more deterministic chunk blobs plus their member operation ids.
+
+### `orp/doc-frame`
+
+Carries one object-format `riblt` frame over the `opId` set after the chosen basis snapshot.
+
+### `orp/doc-done`
+
+Reports the exact missing operation ids for the receiver.
+
+### `orp/blob-get`
+
+Requests opaque operation blobs by `opId`.
+
+### `orp/blob-put`
+
+Transfers opaque operation blobs.
+
+### `orp/snapshot-get`
+
+Requests a snapshot blob by `snapshotId`.
+
+### `orp/snapshot-put`
+
+Transfers a snapshot blob plus tail operations after that snapshot.
+
+## Protocol Flow
+
+### 1. Session setup
+
+The initiator sends `orp/hello`. The responder either accepts the session parameters or aborts at the transport level.
+
+### 2. Inventory reconciliation
+
+Both peers build a local set of inventory entries:
+
+```text
+entry = H(docHandle, summaryHash)
+```
+
+They exchange `orp/inventory-frame` messages until the `riblt` session decodes. One peer then sends `orp/inventory-done`.
+
+Result:
+
+- no entry mismatch: the document is in sync
+- entry mismatch: the document requires repair
+
+ORP intentionally only answers `same` vs `different` at this stage.
+
+### 3. Optional chunk reconciliation
+
+For each differing document, peers may exchange chunk summaries:
+
+1. Both sides advertise chunk summaries in `orp/doc-status`.
+2. They exchange `orp/chunk-frame` messages over the chunk summary set.
+3. They report differing chunks via `orp/chunk-done`.
+4. They either transfer those chunks directly or descend to operation-level repair.
+
+Chunking is especially useful when documents are large and differences are localized.
+
+### 4. Per-document repair
+
+For each differing document:
+
+1. The initiator sends `orp/doc-open`.
+2. Both sides exchange `orp/doc-status`.
+3. They optionally reconcile chunks.
+4. They choose a basis snapshot, if any.
+5. They exchange `orp/doc-frame` messages over the remaining `opId` sets.
+6. Each side reports missing `opId`s via `orp/doc-done`.
+
+### 5. Blob transfer
+
+The side missing operations sends `orp/blob-get`. The other side responds with `orp/blob-put`.
+
+### 6. Chunk transfer
+
+If one or more deterministic chunks are cheaper to transfer than many individual operations, a peer may switch to:
+
+1. `orp/chunk-get`
+2. `orp/chunk-put`
+
+### 7. Snapshot fast path
+
+If operation tails are too large, a peer may switch to:
+
+1. `orp/snapshot-get`
+2. `orp/snapshot-put`
+
+This avoids repeated repair across very large document histories.
+
+## Validation Rules
+
+- All messages must carry `version: 1`.
+- `sessionId`, `scopeId`, `docHandle`, `opId`, and `snapshotId` must be non-empty strings.
+- `inventoryParams.hashSeed` and `operationParams.hashSeed` must be 16-character lowercase hex strings.
+- `symbolSize` and `batchSize` must be positive integers.
+- `tailCount` must be a non-negative integer.
+- `opCount` must be a non-negative integer.
+- `riblt` object frames must use the workspace `riblt` wire constants.
+
+The `@riblt/orp` package exports runtime validators and assertion helpers for these rules.
+
+## Error Handling
+
+This workspace spec leaves transport error reporting to the embedding implementation. A practical transport should reject:
+
+- unsupported protocol versions
+- invalid message bodies
+- mismatched session ids
+- incompatible `riblt` parameters
+
+## Security And Privacy Notes
+
+- ORP reconciles opaque ids and blobs, but it still leaks document-set shape and operation-set shape to the transport.
+- Deterministic chunking adds stable chunk ids and chunk hashes, which also carry metadata implications.
+- Stable `docHandle`s and `opId`s should be designed with metadata exposure in mind.
+- Summary digests should be computed over canonical representations.
+- Snapshot delivery should be authenticated by the transport or outer protocol.
+
+## Reference Package
+
+The workspace includes:
+
+- [`@riblt/orp`](/docs/orp): message interfaces, validators, and example transcripts
+- `examples/orp-demo`: a simple runnable ORP implementation using a grow-only set CRDT

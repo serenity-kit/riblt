@@ -1,0 +1,106 @@
+---
+title: riblt
+description: The low-level set reconciliation engine.
+---
+
+`riblt` is the algorithm layer. It knows how to encode a local set into coded symbols, merge symbols from another peer, and decode the difference between the two sets.
+
+## Installation
+
+```sh
+pnpm add riblt
+```
+
+## Core API
+
+```ts
+import { createRiblt } from "riblt";
+
+const alice = createRiblt({ symbolSize: 64, hashSeed: 0n, batchSize: 2 });
+const bob = createRiblt({ symbolSize: 64, hashSeed: 0n, batchSize: 2 });
+
+alice.add(["id-1", "id-2", "alice-only"]);
+bob.add(["id-1", "id-2", "bob-only"]);
+
+let result = bob.decode();
+while (result.status !== "complete") {
+  bob.merge(alice.encode({ count: 2 }));
+  result = bob.decode();
+}
+
+console.log(result.missing); // ["alice-only"]
+console.log(result.extra);   // ["bob-only"]
+```
+
+## Public Surface
+
+### `createRiblt(options?)`
+
+Creates a reconciliation session.
+
+Supported options:
+
+- `symbolSize`: fixed byte width for each encoded identifier. Default: `64`.
+- `expectedDiff`: optional diff estimate used to size the default batch.
+- `errorRate`: optional tuning input for the default batch size.
+- `batchSize`: number of coded symbols emitted by `encode()` when `count` is omitted.
+- `hashSeed`: 64-bit seed shared by both peers. Default: `0n`.
+
+### Session methods
+
+- `add(ids)`: register local ids before any encoding or merging begins.
+- `encode({ count, format })`: produce the next coded symbols as binary or object data.
+- `merge(message)`: apply coded symbols received from the other peer.
+- `decode()`: inspect the current reconciliation state.
+- `reset()`: clear the session and reuse the instance.
+
+## Decode States
+
+`decode()` returns:
+
+- `complete`: the diff is fully decoded.
+- `incomplete`: more coded symbols are still needed.
+- `failed`: a compatibility error happened, such as mismatched parameters.
+
+The result object always has:
+
+- `missing`: ids present in the remote peer but not locally.
+- `extra`: ids present locally but not in the remote peer.
+
+## Message Formats
+
+`encode()` supports two output formats:
+
+- binary `Uint8Array`: compact transport format
+- object `RibltMessage`: JSON-friendly structure with base64 symbols
+
+Use the object format when building protocols or debugging by hand. Use the binary format if you control the transport and want lower overhead.
+
+## Compatibility Rules
+
+Both peers must use the same:
+
+- `symbolSize`
+- `hashSeed`
+- message version
+- hash algorithm
+
+If a peer receives incompatible data, the session moves to `failed`.
+
+## Constraints
+
+- Identifiers are currently strings.
+- The first 4 bytes of each symbol store the UTF-8 byte length.
+- With the default `symbolSize` of `64`, ids longer than `60` UTF-8 bytes throw.
+- You cannot call `add()` after encoding or merging has started.
+
+## When To Use riblt Directly
+
+Use `riblt` directly when:
+
+- you already have a transport protocol
+- you need binary frames
+- you want fine-grained control over batch sizing and round progression
+- you are integrating with a non-browser or non-HTTP stack
+
+If you want a higher-level document and operation reconciliation workflow, use [orp](/docs/orp).
