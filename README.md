@@ -3,7 +3,7 @@
 This repository is now a pnpm workspace with three main parts:
 
 - `packages/riblt`: the core Rateless IBLT implementation.
-- `packages/orp`: the Operation Reconciliation Protocol interfaces and validators.
+- `packages/orp`: the Operation Reconciliation Protocol interfaces, validators, and chunk-aware repair surface.
 - `examples/orp-demo`: a runnable ORP demonstration with a simple CRDT.
 
 ## Commands

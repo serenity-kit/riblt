@@ -9,8 +9,11 @@ The demo uses:
 
 - a simple grow-only set CRDT
 - document summaries for inventory comparison
+- a flat repair flow for readability in the browser
 - simulated `riblt` frame exchange in the transcript
 - exact missing-op transfer during the repair phase
+
+The CLI example in `examples/orp-demo` shows the chunk-aware version of ORP, where deterministic hash buckets sit between document inventory and single-op repair.
 
 Try this flow:
 

@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   ORP_EXAMPLE_TRANSCRIPTS,
   OrpValidationError,
+  assertValidChunkSummary,
   assertValidOrpMessage,
+  validateChunkSummary,
   validateDocSummary,
   validateOrpMessage,
   validateOrpTranscript,
@@ -58,6 +60,36 @@ describe("orp validators", () => {
       expect.arrayContaining([
         expect.objectContaining({ path: "$.docHandle" }),
         expect.objectContaining({ path: "$.tailCount" }),
+        expect.objectContaining({ path: "$.xorA" }),
+      ])
+    );
+  });
+
+  it("accepts valid chunk summaries and rejects invalid ones", () => {
+    expect(() =>
+      assertValidChunkSummary({
+        chunkId: "bucket-0",
+        opCount: 3,
+        xorA: "a",
+        xorB: "b",
+        sumA: "c",
+        sumB: "d",
+      })
+    ).not.toThrow();
+
+    const issues = validateChunkSummary({
+      chunkId: "",
+      opCount: -1,
+      xorA: "",
+      xorB: "b",
+      sumA: "c",
+      sumB: "d",
+    });
+
+    expect(issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ path: "$.chunkId" }),
+        expect.objectContaining({ path: "$.opCount" }),
         expect.objectContaining({ path: "$.xorA" }),
       ])
     );

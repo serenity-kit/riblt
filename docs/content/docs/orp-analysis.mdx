@@ -46,6 +46,18 @@ doc_repair_bytes ~= 2 * 1.35 * d * 84
 
 This excludes the actual blob transfer for the missing operations.
 
+### Optional chunk phase
+
+If a differing document is partitioned into `c` deterministic chunks and only `k` chunks differ, ORP can often reduce its repair scope to those `k` chunks first.
+
+Approximate chunk-summary cost:
+
+```text
+chunk_bytes ~= 2 * 1.35 * (2k) * 84
+```
+
+This does not remove the cost of transferring data, but it can avoid descending immediately into all `d` operation ids for the full document.
+
 ## Scenario Estimates
 
 ### Mostly in sync
@@ -131,6 +143,21 @@ Total rough wire budget: about `447 MB`
 
 At this point, snapshot transfer becomes the important escape hatch.
 
+### Severe divergence with chunking
+
+If the same severe-divergence case is concentrated in `80` bad chunks instead of uniformly across the full operation space, ORP can often:
+
+- reconcile chunk summaries first
+- transfer whole chunk blobs for the large bad chunks
+- only use per-op repair for the small residual chunks
+
+The win is not that chunks are magically smaller than ops. The win is that chunking introduces a middle layer that:
+
+- narrows the repair scope
+- improves batching
+- supports reusable cached blobs
+- reduces repeated single-op negotiation for the same hot regions
+
 ## Storage And CPU Considerations
 
 ### Per-document metadata
@@ -149,13 +176,15 @@ That is typically a few dozen bytes of structured metadata before transport enco
 ORP saves wire bandwidth when differences are sparse, but a peer still needs to:
 
 - materialize the visible document summary set for each session
+- optionally materialize deterministic chunk summaries for differing documents
 - materialize the operation id set for each differing document
 - seed those ids into `riblt`
 
 That means:
 
 - inventory CPU is roughly linear in visible document count
-- repair CPU is roughly linear in operation count for each repaired document
+- chunk CPU is roughly linear in operation count for the chunked document
+- repair CPU is roughly linear in operation count for each descended chunk or repaired document
 
 ORP trades feed maintenance and Merkle maintenance for fresh set construction at sync time.
 
@@ -163,6 +192,7 @@ ORP trades feed maintenance and Merkle maintenance for fresh set construction at
 
 - Use binary `riblt` frames in production. Object frames are convenient but noticeably larger.
 - Keep `docHandle` and `opId` short and stable.
+- Use deterministic chunking when documents are large but differences are localized.
 - Add snapshots for documents with long tails or chronic divergence.
 - Bound `recentSnapshots` to a small list, such as `3` to `5`.
 - Prefer ORP when most documents are already in sync and sparse repair is common.

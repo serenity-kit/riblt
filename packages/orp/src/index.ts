@@ -10,6 +10,8 @@ export type OpId = string;
 export type ScopeId = string;
 export type SessionId = string;
 export type SnapshotId = string;
+export type ChunkId = string;
+export type OrpChunkingAlgorithm = "hash-bucket/v1";
 
 export interface OrpParameters {
   symbolSize: number;
@@ -27,8 +29,23 @@ export interface DocSummary {
   sumB: Digest;
 }
 
+export interface ChunkSummary {
+  chunkId: ChunkId;
+  opCount: number;
+  xorA: Digest;
+  xorB: Digest;
+  sumA: Digest;
+  sumB: Digest;
+}
+
 export interface InventoryDiffEntry {
   docHandle: DocHandle;
+  localSummaryHash?: Digest;
+  remoteSummaryHash?: Digest;
+}
+
+export interface ChunkDiffEntry {
+  chunkId: ChunkId;
   localSummaryHash?: Digest;
   remoteSummaryHash?: Digest;
 }
@@ -38,9 +55,21 @@ export interface BlobUnit {
   blob: string;
 }
 
+export interface ChunkUnit {
+  chunkId: ChunkId;
+  opIds: OpId[];
+  blob: string;
+}
+
 export interface SnapshotUnit {
   snapshotId: SnapshotId;
   blob: string;
+}
+
+export interface OrpChunkingDescriptor {
+  algorithm: OrpChunkingAlgorithm;
+  bucketCount: number;
+  summaries: ChunkSummary[];
 }
 
 export interface OrpHelloMessage {
@@ -80,6 +109,39 @@ export interface OrpDocStatusMessage {
   docHandle: DocHandle;
   summary: DocSummary;
   recentSnapshots: SnapshotId[];
+  chunking?: OrpChunkingDescriptor;
+}
+
+export interface OrpChunkFrameMessage {
+  type: "orp/chunk-frame";
+  version: typeof ORP_PROTOCOL_VERSION;
+  sessionId: SessionId;
+  docHandle: DocHandle;
+  frame: RibltMessage;
+}
+
+export interface OrpChunkDoneMessage {
+  type: "orp/chunk-done";
+  version: typeof ORP_PROTOCOL_VERSION;
+  sessionId: SessionId;
+  docHandle: DocHandle;
+  differingChunks: ChunkDiffEntry[];
+}
+
+export interface OrpChunkGetMessage {
+  type: "orp/chunk-get";
+  version: typeof ORP_PROTOCOL_VERSION;
+  sessionId: SessionId;
+  docHandle: DocHandle;
+  chunkIds: ChunkId[];
+}
+
+export interface OrpChunkPutMessage {
+  type: "orp/chunk-put";
+  version: typeof ORP_PROTOCOL_VERSION;
+  sessionId: SessionId;
+  docHandle: DocHandle;
+  chunks: ChunkUnit[];
 }
 
 export interface OrpDocFrameMessage {
@@ -139,6 +201,10 @@ export type OrpMessage =
   | OrpInventoryDoneMessage
   | OrpDocOpenMessage
   | OrpDocStatusMessage
+  | OrpChunkFrameMessage
+  | OrpChunkDoneMessage
+  | OrpChunkGetMessage
+  | OrpChunkPutMessage
   | OrpDocFrameMessage
   | OrpDocDoneMessage
   | OrpBlobGetMessage
@@ -341,6 +407,114 @@ export const ORP_EXAMPLE_TRANSCRIPTS: OrpTranscript[] = [
       },
     ],
   },
+  {
+    name: "chunked-repair",
+    description: "The peers compare deterministic hash buckets before choosing a larger chunk transfer.",
+    events: [
+      {
+        from: "initiator",
+        to: "responder",
+        note: "Advertise the document summary plus deterministic chunk summaries.",
+        message: {
+          type: "orp/doc-status",
+          version: ORP_PROTOCOL_VERSION,
+          sessionId: "orp-example-3",
+          docHandle: "doc-archive",
+          summary: {
+            docHandle: "doc-archive",
+            tailCount: 8,
+            xorA: "155efb8f8a66bc40d768ea4b5965fefd",
+            xorB: "7e51d546684ee4e61c7f49ff07bf2f6f",
+            sumA: "83484dcae3d6fc6bad846ea3d69434b7",
+            sumB: "6c480635f0f0ec5df5d67ae6d23c0d6a",
+          },
+          recentSnapshots: [],
+          chunking: {
+            algorithm: "hash-bucket/v1",
+            bucketCount: 4,
+            summaries: [
+              {
+                chunkId: "bucket-0",
+                opCount: 3,
+                xorA: "845913ef0d3df52cb17bd5cd1cb7896c",
+                xorB: "25a2bd5f20f192548dfb4f4fb603d8ec",
+                sumA: "9878ef92d05f1ac28a4bc5b44d091559",
+                sumB: "756889f57e5ff94b7ff4bf2af8d4d8df",
+              },
+              {
+                chunkId: "bucket-1",
+                opCount: 2,
+                xorA: "454ac9afe7f8940bd4ec7cc0252d801c",
+                xorB: "a34f19579a204bf2db18f1cc621469c0",
+                sumA: "129894738eb95f2120bc3190c52dc921",
+                sumB: "18f0834f72ec20155d3f8a34957a4c10",
+              },
+            ],
+          },
+        },
+      },
+      {
+        from: "initiator",
+        to: "responder",
+        note: "Send a chunk-summary RIBLT frame over `(chunkId, chunkSummaryHash)` entries.",
+        message: {
+          type: "orp/chunk-frame",
+          version: ORP_PROTOCOL_VERSION,
+          sessionId: "orp-example-3",
+          docHandle: "doc-archive",
+          frame: exampleFrame("0000000000000007"),
+        },
+      },
+      {
+        from: "initiator",
+        to: "responder",
+        note: "Report the exact chunk mismatch before descending to per-op repair.",
+        message: {
+          type: "orp/chunk-done",
+          version: ORP_PROTOCOL_VERSION,
+          sessionId: "orp-example-3",
+          docHandle: "doc-archive",
+          differingChunks: [
+            {
+              chunkId: "bucket-0",
+              localSummaryHash: "6a65b0a49bfb73e58b8bd46cde4cf3eb",
+              remoteSummaryHash: "08ab6d3fe6ca1fc8074dc778ebfbaae4",
+            },
+          ],
+        },
+      },
+      {
+        from: "initiator",
+        to: "responder",
+        note: "Request the larger chunk blob instead of many individual operation blobs.",
+        message: {
+          type: "orp/chunk-get",
+          version: ORP_PROTOCOL_VERSION,
+          sessionId: "orp-example-3",
+          docHandle: "doc-archive",
+          chunkIds: ["bucket-0"],
+        },
+      },
+      {
+        from: "responder",
+        to: "initiator",
+        note: "Transfer the deterministic chunk as one blob plus its member operation ids.",
+        message: {
+          type: "orp/chunk-put",
+          version: ORP_PROTOCOL_VERSION,
+          sessionId: "orp-example-3",
+          docHandle: "doc-archive",
+          chunks: [
+            {
+              chunkId: "bucket-0",
+              opIds: ["op-archive-3", "op-archive-4", "op-archive-5"],
+              blob: "base64:AAAABmNodW5rLTA=",
+            },
+          ],
+        },
+      },
+    ],
+  },
 ];
 
 export function validateOrpMessage(value: unknown): OrpValidationIssue[] {
@@ -387,6 +561,35 @@ export function validateOrpMessage(value: unknown): OrpValidationIssue[] {
       validateDocSummaryInto(value.summary, "$.summary", issues);
       validateArray(value.recentSnapshots, "$.recentSnapshots", issues, (snapshotId, path) => {
         validateString(snapshotId, path, issues);
+      });
+      validateOptionalChunking(value.chunking, "$.chunking", issues);
+      break;
+    case "orp/chunk-frame":
+      validateString(value.docHandle, "$.docHandle", issues);
+      validateRibltFrame(value.frame, "$.frame", issues);
+      break;
+    case "orp/chunk-done":
+      validateString(value.docHandle, "$.docHandle", issues);
+      validateArray(value.differingChunks, "$.differingChunks", issues, (entry, path) => {
+        if (!isRecord(entry)) {
+          issues.push({ path, message: "must be an object" });
+          return;
+        }
+        validateString(entry.chunkId, `${path}.chunkId`, issues);
+        validateOptionalString(entry.localSummaryHash, `${path}.localSummaryHash`, issues);
+        validateOptionalString(entry.remoteSummaryHash, `${path}.remoteSummaryHash`, issues);
+      });
+      break;
+    case "orp/chunk-get":
+      validateString(value.docHandle, "$.docHandle", issues);
+      validateArray(value.chunkIds, "$.chunkIds", issues, (chunkId, path) => {
+        validateString(chunkId, path, issues);
+      });
+      break;
+    case "orp/chunk-put":
+      validateString(value.docHandle, "$.docHandle", issues);
+      validateArray(value.chunks, "$.chunks", issues, (chunk, path) => {
+        validateChunkUnit(chunk, path, issues);
       });
       break;
     case "orp/doc-frame":
@@ -438,6 +641,12 @@ export function validateDocSummary(value: unknown): OrpValidationIssue[] {
   return issues;
 }
 
+export function validateChunkSummary(value: unknown): OrpValidationIssue[] {
+  const issues: OrpValidationIssue[] = [];
+  validateChunkSummaryInto(value, "$", issues);
+  return issues;
+}
+
 export function validateOrpTranscript(value: unknown): OrpValidationIssue[] {
   const issues: OrpValidationIssue[] = [];
 
@@ -475,6 +684,13 @@ export function assertValidOrpMessage(value: unknown): asserts value is OrpMessa
 
 export function assertValidDocSummary(value: unknown): asserts value is DocSummary {
   const issues = validateDocSummary(value);
+  if (issues.length > 0) {
+    throw new OrpValidationError(issues);
+  }
+}
+
+export function assertValidChunkSummary(value: unknown): asserts value is ChunkSummary {
+  const issues = validateChunkSummary(value);
   if (issues.length > 0) {
     throw new OrpValidationError(issues);
   }
@@ -577,6 +793,24 @@ function validateDocSummaryInto(
   validateString(value.sumB, `${path}.sumB`, issues);
 }
 
+function validateChunkSummaryInto(
+  value: unknown,
+  path: string,
+  issues: OrpValidationIssue[]
+): void {
+  if (!isRecord(value)) {
+    issues.push({ path, message: "must be an object" });
+    return;
+  }
+
+  validateString(value.chunkId, `${path}.chunkId`, issues);
+  validateNonNegativeInteger(value.opCount, `${path}.opCount`, issues);
+  validateString(value.xorA, `${path}.xorA`, issues);
+  validateString(value.xorB, `${path}.xorB`, issues);
+  validateString(value.sumA, `${path}.sumA`, issues);
+  validateString(value.sumB, `${path}.sumB`, issues);
+}
+
 function validateBlobUnit(
   value: unknown,
   path: string,
@@ -588,6 +822,23 @@ function validateBlobUnit(
   }
 
   validateString(value.opId, `${path}.opId`, issues);
+  validateString(value.blob, `${path}.blob`, issues);
+}
+
+function validateChunkUnit(
+  value: unknown,
+  path: string,
+  issues: OrpValidationIssue[]
+): void {
+  if (!isRecord(value)) {
+    issues.push({ path, message: "must be an object" });
+    return;
+  }
+
+  validateString(value.chunkId, `${path}.chunkId`, issues);
+  validateArray(value.opIds, `${path}.opIds`, issues, (opId, itemPath) => {
+    validateString(opId, itemPath, issues);
+  });
   validateString(value.blob, `${path}.blob`, issues);
 }
 
@@ -603,6 +854,34 @@ function validateSnapshotUnit(
 
   validateString(value.snapshotId, `${path}.snapshotId`, issues);
   validateString(value.blob, `${path}.blob`, issues);
+}
+
+function validateOptionalChunking(
+  value: unknown,
+  path: string,
+  issues: OrpValidationIssue[]
+): void {
+  if (typeof value === "undefined") {
+    return;
+  }
+  validateChunkingDescriptor(value, path, issues);
+}
+
+function validateChunkingDescriptor(
+  value: unknown,
+  path: string,
+  issues: OrpValidationIssue[]
+): void {
+  if (!isRecord(value)) {
+    issues.push({ path, message: "must be an object" });
+    return;
+  }
+
+  validateEnum(value.algorithm, `${path}.algorithm`, ["hash-bucket/v1"], issues);
+  validatePositiveInteger(value.bucketCount, `${path}.bucketCount`, issues);
+  validateArray(value.summaries, `${path}.summaries`, issues, (summary, summaryPath) => {
+    validateChunkSummaryInto(summary, summaryPath, issues);
+  });
 }
 
 function validateString(

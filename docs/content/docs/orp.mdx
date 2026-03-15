@@ -19,6 +19,7 @@ ORP is meant for applications where:
 - operation payloads are treated as opaque blobs by the sync layer
 - anti-entropy matters more than stream replication
 - you want exact repair without Merkle trees or checkpoint feeds
+- you may want an optional chunk layer between document inventory and single-op repair
 
 The package gives you the wire model and runtime guards. It does not impose a transport or a specific CRDT.
 
@@ -72,6 +73,26 @@ type DocSummary = {
 
 The digest fields summarize the operation set after the optional basis snapshot. ORP uses that summary to decide whether a document is the same or different before any per-document repair starts.
 
+### `ChunkSummary`
+
+ORP also supports deterministic unordered-op chunking:
+
+```ts
+type ChunkSummary = {
+  chunkId: string;
+  opCount: number;
+  xorA: string;
+  xorB: string;
+  sumA: string;
+  sumB: string;
+};
+```
+
+The default documented strategy is `hash-bucket/v1`, where each `opId` is assigned to a stable hash bucket. This gives ORP a middle layer between:
+
+- document inventory
+- single-operation reconciliation
+
 ### Parameters
 
 An ORP session carries two `riblt` parameter sets:
@@ -84,8 +105,9 @@ An ORP session carries two `riblt` parameter sets:
 The package ships with `ORP_EXAMPLE_TRANSCRIPTS`, which show:
 
 - inventory reconciliation over document summaries
+- chunk reconciliation over deterministic buckets
 - per-document repair over operation ids
-- blob fetch and transfer for missing operations
+- blob or chunk transfer for missing data
 
 ## Message Surface
 
@@ -96,6 +118,10 @@ The package exports TypeScript interfaces for:
 - `orp/inventory-done`
 - `orp/doc-open`
 - `orp/doc-status`
+- `orp/chunk-frame`
+- `orp/chunk-done`
+- `orp/chunk-get`
+- `orp/chunk-put`
 - `orp/doc-frame`
 - `orp/doc-done`
 - `orp/blob-get`
@@ -128,6 +154,7 @@ Validation checks cover:
 - required message fields
 - `hashSeed` formatting
 - document summary shape
+- chunk summary shape
 - `riblt` frame shape
 
 ## Relationship To The Spec
@@ -142,7 +169,8 @@ Use this page for the package surface. Use:
 The workspace includes `examples/orp-demo`, which demonstrates:
 
 1. inventory reconciliation over document summaries
-2. per-document operation reconciliation
-3. blob transfer for missing operations
+2. deterministic chunk reconciliation over unordered op sets
+3. per-document operation reconciliation when chunk transfer is not worth it
+4. chunk or blob transfer, depending on the diff size
 
-It uses a simple grow-only set CRDT and keeps snapshots disabled so the flow stays small and readable.
+It uses a simple grow-only set CRDT, deterministic hash buckets, and keeps snapshots disabled so the flow stays small and readable.
