@@ -14,7 +14,7 @@ Open http://localhost:3000 with your browser to see the result.
 
 - `content/docs/index.mdx`: docs landing page
 - `content/docs/riblt.mdx`: algorithm/package documentation
-- `content/docs/setsync.mdx`: protocol/package documentation
+- `content/docs/orp.mdx`: ORP package documentation
 
 ## Useful Commands
 

@@ -1,4 +1,4 @@
 {
   "title": "Documentation",
-  "pages": ["index", "riblt", "setsync", "orp", "orp-rfc", "orp-analysis", "orp-demo"]
+  "pages": ["index", "riblt", "orp", "orp-rfc", "orp-analysis", "orp-demo"]
 }

@@ -2,17 +2,17 @@
 
 ## Project Structure & Module Organization
 - `packages/riblt` contains the core TypeScript RIBLT library.
-- `packages/setsync` contains the higher-level client/server protocol built on top of `riblt`.
-- `examples/browser-server` contains the runnable browser + Node demonstration app.
+- `packages/orp` contains the Operation Reconciliation Protocol interfaces and validators.
+- `examples/orp-demo` contains the runnable ORP demonstration app.
 - Package-local `dist/` folders are generated build output and should not be edited by hand.
 - Root config files provide shared workspace defaults; each package owns its local build and test config.
 
 ## Build, Test, and Development Commands
 - `pnpm install` installs dependencies.
-- `pnpm build` builds both packages and the browser/server example.
+- `pnpm build` builds the workspace packages and the ORP demo example.
 - `pnpm test` runs the Vitest suites in workspace packages.
 - `pnpm lint` runs `tsc --noEmit` across packages and the example app.
-- `pnpm example` starts the built browser/server demo from `examples/browser-server`.
+- `pnpm example` starts the built ORP demo from `examples/orp-demo`.
 
 ## Coding Style & Naming Conventions
 - Use 2-space indentation, double quotes, and semicolons (match existing files).
@@ -32,5 +32,5 @@
   and any relevant context or links to issues.
 
 ## Notes
-- `riblt` is the low-level reconciliation engine; `setsync` is the protocol layer that uses it.
-- Keep the demo transport in `examples/browser-server` thin and focused on showing the protocol flow.
+- `riblt` is the low-level reconciliation engine; `orp` is a higher-level document and operation reconciliation protocol.
+- Keep the demo in `examples/orp-demo` thin and focused on showing the protocol flow.

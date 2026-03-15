@@ -76,19 +76,22 @@ importers:
         specifier: ^5.9.3
         version: 5.9.3
 
-  examples/browser-server:
-    dependencies:
-      '@riblt/setsync':
-        specifier: workspace:*
-        version: link:../../packages/setsync
-
   packages/riblt: {}
 
-  packages/setsync:
+  packages/orp:
     dependencies:
       riblt:
         specifier: workspace:*
         version: link:../riblt
+
+  examples/orp-demo:
+    dependencies:
+      '@riblt/orp':
+        specifier: workspace:*
+        version: link:../../packages/orp
+      riblt:
+        specifier: workspace:*
+        version: link:../../packages/riblt
 
 packages:
 
