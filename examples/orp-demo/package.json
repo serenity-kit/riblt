@@ -5,7 +5,8 @@
   "scripts": {
     "build": "tsup --config tsup.config.ts",
     "start": "node dist/index.js",
-    "lint": "tsc -p tsconfig.json --noEmit"
+    "lint": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run --config vitest.config.ts"
   },
   "dependencies": {
     "@riblt/orp": "workspace:*",

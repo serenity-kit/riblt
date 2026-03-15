@@ -106,4 +106,45 @@ describe("orp validators", () => {
       })
     ).toThrow(OrpValidationError);
   });
+
+  it("rejects malformed chunking metadata on doc status messages", () => {
+    const issues = validateOrpMessage({
+      type: "orp/doc-status",
+      version: 1,
+      sessionId: "session-1",
+      docHandle: "doc-1",
+      summary: {
+        docHandle: "doc-1",
+        tailCount: 1,
+        xorA: "a",
+        xorB: "b",
+        sumA: "c",
+        sumB: "d",
+      },
+      recentSnapshots: [],
+      chunking: {
+        algorithm: "bad-algorithm",
+        bucketCount: 0,
+        summaries: [
+          {
+            chunkId: "",
+            opCount: -1,
+            xorA: "",
+            xorB: "b",
+            sumA: "c",
+            sumB: "d",
+          },
+        ],
+      },
+    });
+
+    expect(issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ path: "$.chunking.algorithm" }),
+        expect.objectContaining({ path: "$.chunking.bucketCount" }),
+        expect.objectContaining({ path: "$.chunking.summaries[0].chunkId" }),
+        expect.objectContaining({ path: "$.chunking.summaries[0].opCount" }),
+      ])
+    );
+  });
 });
