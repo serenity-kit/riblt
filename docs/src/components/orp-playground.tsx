@@ -123,20 +123,22 @@ export function OrpPlayground() {
   }
 
   return (
-    <div className="not-prose my-8 overflow-hidden rounded-[28px] border border-black/10 bg-[linear-gradient(135deg,#fff7ec,white_45%,#eef6ff)] shadow-[0_20px_80px_rgba(15,23,42,0.08)]">
-      <div className="border-b border-black/10 bg-[radial-gradient(circle_at_top_left,#ffd8a8,transparent_35%),radial-gradient(circle_at_top_right,#bfdbfe,transparent_30%)] px-6 py-6">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+    <div className="not-prose my-8 overflow-hidden rounded-[26px] border border-black/10 bg-[linear-gradient(160deg,#fff8ef,white_42%,#edf5ff)] shadow-[0_18px_70px_rgba(15,23,42,0.09)]">
+      <div className="border-b border-black/10 bg-[radial-gradient(circle_at_top_left,#ffd8a8,transparent_34%),radial-gradient(circle_at_top_right,#c7dbff,transparent_28%)] px-4 py-5 sm:px-6 sm:py-6 lg:px-8 lg:py-7">
+        <div className="flex flex-col gap-5">
           <div className="max-w-2xl">
             <p className="text-xs font-semibold uppercase tracking-[0.24em] text-amber-900/70">
               client-side ORP demo
             </p>
-            <h2 className="font-serif text-3xl text-slate-900">Simulate inventory and repair without a server</h2>
-            <p className="mt-2 text-sm leading-6 text-slate-700">
+            <h2 className="mt-1 font-serif text-3xl leading-tight text-slate-900 sm:text-4xl">
+              Simulate inventory and repair without a server
+            </h2>
+            <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-700 sm:text-[15px]">
               This playground uses a simple grow-only set CRDT. The transport is simulated in the browser, so the
               transcript shows ORP phases and message shapes without any network calls.
             </p>
           </div>
-          <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
+          <div className="grid grid-cols-2 gap-2 text-sm sm:grid-cols-4 sm:gap-3">
             <StatCard label="Visible docs" value={String(countDocs(initiator, responder))} />
             <StatCard label="Mismatches" value={String(liveDiffs.length)} />
             <StatCard label="Initiator ops" value={String(countOps(initiator))} />
@@ -145,9 +147,9 @@ export function OrpPlayground() {
         </div>
       </div>
 
-      <div className="grid gap-6 px-6 py-6 lg:grid-cols-[1.1fr_0.9fr]">
-        <div className="space-y-6">
-          <section className="rounded-[22px] border border-black/10 bg-white/80 p-5">
+      <div className="grid gap-5 px-4 py-4 sm:px-6 sm:py-6 xl:grid-cols-[minmax(0,1.18fr)_minmax(0,0.82fr)] xl:items-start xl:gap-6 xl:px-8 xl:py-8">
+        <div className="space-y-5 sm:space-y-6">
+          <section className="rounded-[22px] border border-black/10 bg-white/80 p-4 shadow-[0_10px_30px_rgba(15,23,42,0.04)] sm:p-5">
             <div className="flex flex-col gap-4">
               <div>
                 <p className="text-sm font-semibold text-slate-900">Inject a local operation</p>
@@ -155,13 +157,13 @@ export function OrpPlayground() {
                   Add one CRDT operation to either peer, then inspect the inventory mismatch set or run a full sync.
                 </p>
               </div>
-              <div className="grid gap-3 md:grid-cols-[140px_1fr_1fr_auto]">
+              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-[140px_minmax(0,1fr)_minmax(0,1fr)_auto]">
                 <label className="flex flex-col gap-1 text-sm font-medium text-slate-700">
                   Peer
                   <select
                     value={targetPeer}
                     onChange={(event) => setTargetPeer(event.target.value as PeerId)}
-                    className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-slate-900"
+                    className="min-w-0 rounded-xl border border-slate-200 bg-white px-3 py-2 text-slate-900"
                   >
                     <option value="initiator">Initiator</option>
                     <option value="responder">Responder</option>
@@ -173,7 +175,7 @@ export function OrpPlayground() {
                     value={docHandle}
                     onChange={(event) => setDocHandle(event.target.value)}
                     placeholder="doc-notes"
-                    className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-slate-900"
+                    className="min-w-0 rounded-xl border border-slate-200 bg-white px-3 py-2 text-slate-900"
                   />
                 </label>
                 <label className="flex flex-col gap-1 text-sm font-medium text-slate-700">
@@ -182,36 +184,36 @@ export function OrpPlayground() {
                     value={value}
                     onChange={(event) => setValue(event.target.value)}
                     placeholder="owner:bob"
-                    className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-slate-900"
+                    className="min-w-0 rounded-xl border border-slate-200 bg-white px-3 py-2 text-slate-900"
                   />
                 </label>
                 <button
                   type="button"
                   onClick={applyLocalOperation}
-                  className="mt-auto rounded-xl bg-slate-950 px-4 py-2 text-sm font-medium text-white"
+                  className="rounded-xl bg-slate-950 px-4 py-2.5 text-sm font-medium text-white sm:col-span-2 xl:col-span-1 xl:mt-auto"
                 >
                   Add op
                 </button>
               </div>
-              <div className="flex flex-wrap gap-3">
+              <div className="grid gap-3 sm:grid-cols-3">
                 <button
                   type="button"
                   onClick={analyzeInventory}
-                  className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-900"
+                  className="rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-medium text-slate-900"
                 >
                   Analyze inventory
                 </button>
                 <button
                   type="button"
                   onClick={runFullSync}
-                  className="rounded-xl bg-amber-500 px-4 py-2 text-sm font-medium text-amber-950"
+                  className="rounded-xl bg-amber-500 px-4 py-2.5 text-sm font-medium text-amber-950 shadow-[inset_0_-1px_0_rgba(0,0,0,0.12)]"
                 >
                   Run full ORP sync
                 </button>
                 <button
                   type="button"
                   onClick={resetScenario}
-                  className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-900"
+                  className="rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-medium text-slate-900"
                 >
                   Reset scenario
                 </button>
@@ -219,13 +221,13 @@ export function OrpPlayground() {
             </div>
           </section>
 
-          <section className="grid gap-4 xl:grid-cols-2">
+          <section className="grid gap-4 lg:grid-cols-2">
             <PeerPanel title="Initiator" peer={initiator} accent="amber" />
             <PeerPanel title="Responder" peer={responder} accent="sky" />
           </section>
 
-          <section className="rounded-[22px] border border-black/10 bg-white/80 p-5">
-            <div className="flex items-center justify-between gap-3">
+          <section className="rounded-[22px] border border-black/10 bg-white/80 p-4 shadow-[0_10px_30px_rgba(15,23,42,0.04)] sm:p-5">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <p className="text-sm font-semibold text-slate-900">Latest inventory result</p>
                 <p className="text-sm text-slate-600">
@@ -249,11 +251,11 @@ export function OrpPlayground() {
                 lastDiff.map((entry) => (
                   <div
                     key={entry.docHandle}
-                    className="grid gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 md:grid-cols-[140px_1fr_1fr]"
+                    className="grid gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 lg:grid-cols-[140px_minmax(0,1fr)_minmax(0,1fr)]"
                   >
                     <div className="font-medium text-slate-900">{entry.docHandle}</div>
-                    <div>initiator: {entry.initiatorSummaryHash ?? "missing"}</div>
-                    <div>responder: {entry.responderSummaryHash ?? "missing"}</div>
+                    <div className="break-all">initiator: {entry.initiatorSummaryHash ?? "missing"}</div>
+                    <div className="break-all">responder: {entry.responderSummaryHash ?? "missing"}</div>
                   </div>
                 ))
               )}
@@ -261,17 +263,19 @@ export function OrpPlayground() {
           </section>
         </div>
 
-        <section className="rounded-[22px] border border-black/10 bg-slate-950 p-5 text-slate-100">
-          <div className="flex items-center justify-between gap-3">
+        <section className="rounded-[22px] border border-black/10 bg-slate-950 p-4 text-slate-100 shadow-[0_12px_40px_rgba(15,23,42,0.16)] sm:p-5 xl:sticky xl:top-24">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div>
               <p className="text-sm font-semibold">Transcript</p>
-              <p className="text-sm text-slate-400">Client-side ORP session messages, with RIBLT frames summarized.</p>
+              <p className="max-w-md text-sm text-slate-400">
+                Client-side ORP session messages, with RIBLT frames summarized instead of sent over a real transport.
+              </p>
             </div>
             <span className="rounded-full border border-white/10 px-3 py-1 text-xs uppercase tracking-[0.18em] text-slate-300">
               {transcript.length} events
             </span>
           </div>
-          <div className="mt-4 space-y-3">
+          <div className="mt-4 space-y-3 xl:max-h-[70vh] xl:overflow-y-auto xl:pr-1">
             {transcript.length === 0 ? (
               <p className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-slate-300">
                 Run inventory analysis or a full sync to generate a transcript.
@@ -279,14 +283,14 @@ export function OrpPlayground() {
             ) : (
               transcript.map((entry, index) => (
                 <div key={`${entry.note}-${index}`} className="rounded-2xl border border-white/10 bg-white/5 p-4">
-                  <div className="flex items-center justify-between gap-3 text-xs uppercase tracking-[0.16em] text-slate-400">
+                  <div className="flex flex-col gap-2 text-xs uppercase tracking-[0.16em] text-slate-400 sm:flex-row sm:items-center sm:justify-between">
                     <span>
                       {entry.from} to {entry.to}
                     </span>
                     <span>{String(entry.message.type)}</span>
                   </div>
                   <p className="mt-2 text-sm text-slate-100">{entry.note}</p>
-                  <pre className="mt-3 overflow-x-auto rounded-xl bg-black/30 p-3 text-xs leading-6 text-slate-200">
+                  <pre className="mt-3 overflow-x-auto whitespace-pre-wrap break-words rounded-xl bg-black/30 p-3 text-xs leading-6 text-slate-200">
                     {JSON.stringify(entry.message, null, 2)}
                   </pre>
                 </div>
@@ -301,9 +305,9 @@ export function OrpPlayground() {
 
 function StatCard({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-2xl border border-black/10 bg-white/70 px-4 py-3 text-right">
-      <div className="text-xs uppercase tracking-[0.18em] text-slate-500">{label}</div>
-      <div className="mt-1 text-2xl font-semibold text-slate-950">{value}</div>
+    <div className="rounded-2xl border border-black/10 bg-white/70 px-3 py-3 text-left backdrop-blur sm:px-4 sm:text-right">
+      <div className="text-[10px] uppercase tracking-[0.2em] text-slate-500 sm:text-xs">{label}</div>
+      <div className="mt-1 text-2xl font-semibold text-slate-950 sm:text-[2rem]">{value}</div>
     </div>
   );
 }
@@ -324,7 +328,7 @@ function PeerPanel({
 
   return (
     <div className={`rounded-[22px] border p-5 ${accentClass}`}>
-      <div className="flex items-center justify-between gap-3">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <p className="text-sm font-semibold text-slate-900">{title}</p>
           <p className="text-sm text-slate-600">{Object.keys(peer.documents).length} documents in scope</p>
@@ -338,8 +342,8 @@ function PeerPanel({
           .sort((a, b) => a.docHandle.localeCompare(b.docHandle))
           .map((document) => (
             <div key={document.docHandle} className="rounded-2xl border border-black/10 bg-white/70 px-4 py-3">
-              <div className="flex items-center justify-between gap-3">
-                <span className="font-medium text-slate-900">{document.docHandle}</span>
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <span className="break-all font-medium text-slate-900">{document.docHandle}</span>
                 <span className="text-xs uppercase tracking-[0.16em] text-slate-500">{document.ops.length} ops</span>
               </div>
               <div className="mt-3 flex flex-wrap gap-2">
