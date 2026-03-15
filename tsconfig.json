@@ -12,7 +12,8 @@
     "baseUrl": ".",
     "paths": {
       "riblt": ["packages/riblt/src/index.ts"],
-      "@riblt/setsync": ["packages/setsync/src/index.ts"]
+      "@riblt/setsync": ["packages/setsync/src/index.ts"],
+      "@riblt/orp": ["packages/orp/src/index.ts"]
     }
   }
 }

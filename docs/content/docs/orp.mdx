@@ -1,0 +1,148 @@
+---
+title: orp
+description: The Operation Reconciliation Protocol package and API surface.
+---
+
+`@riblt/orp` is the package layer for the Operation Reconciliation Protocol. It provides a transport-neutral TypeScript surface for ORP message types, validation helpers, and example transcripts.
+
+## Installation
+
+```sh
+pnpm add @riblt/orp
+```
+
+## Why It Exists
+
+ORP is meant for applications where:
+
+- documents are synced independently
+- operation payloads are treated as opaque blobs by the sync layer
+- anti-entropy matters more than stream replication
+- you want exact repair without Merkle trees or checkpoint feeds
+
+The package gives you the wire model and runtime guards. It does not impose a transport or a specific CRDT.
+
+## Basic Example
+
+```ts
+import {
+  ORP_EXAMPLE_TRANSCRIPTS,
+  assertValidOrpMessage,
+  type OrpHelloMessage,
+} from "@riblt/orp";
+
+const hello: OrpHelloMessage = {
+  type: "orp/hello",
+  version: 1,
+  sessionId: "orp-demo-session",
+  scopeId: "tenant-42",
+  inventoryParams: {
+    symbolSize: 64,
+    batchSize: 4,
+    hashSeed: "0000000000000007",
+  },
+  operationParams: {
+    symbolSize: 64,
+    batchSize: 4,
+    hashSeed: "0000000000000007",
+  },
+};
+
+assertValidOrpMessage(hello);
+console.log(ORP_EXAMPLE_TRANSCRIPTS[0].name);
+```
+
+## Main Concepts
+
+### `DocSummary`
+
+Each document is summarized with:
+
+```ts
+type DocSummary = {
+  docHandle: string;
+  basisSnapshotId?: string;
+  tailCount: number;
+  xorA: string;
+  xorB: string;
+  sumA: string;
+  sumB: string;
+};
+```
+
+The digest fields summarize the operation set after the optional basis snapshot. ORP uses that summary to decide whether a document is the same or different before any per-document repair starts.
+
+### Parameters
+
+An ORP session carries two `riblt` parameter sets:
+
+- `inventoryParams`: used for document summary reconciliation
+- `operationParams`: used for per-document operation reconciliation
+
+### Transcripts
+
+The package ships with `ORP_EXAMPLE_TRANSCRIPTS`, which show:
+
+- inventory reconciliation over document summaries
+- per-document repair over operation ids
+- blob fetch and transfer for missing operations
+
+## Message Surface
+
+The package exports TypeScript interfaces for:
+
+- `orp/hello`
+- `orp/inventory-frame`
+- `orp/inventory-done`
+- `orp/doc-open`
+- `orp/doc-status`
+- `orp/doc-frame`
+- `orp/doc-done`
+- `orp/blob-get`
+- `orp/blob-put`
+- `orp/snapshot-get`
+- `orp/snapshot-put`
+
+Each message includes:
+
+- `version`
+- `sessionId`
+- message-specific fields
+
+The `frame` fields use object-format `riblt` messages so they are JSON-friendly by default.
+
+## Runtime Validation
+
+The package exports:
+
+- `validateOrpMessage()`
+- `validateDocSummary()`
+- `validateOrpTranscript()`
+- `assertValidOrpMessage()`
+- `assertValidDocSummary()`
+- `assertValidOrpTranscript()`
+
+Validation checks cover:
+
+- protocol version
+- required message fields
+- `hashSeed` formatting
+- document summary shape
+- `riblt` frame shape
+
+## Relationship To The Spec
+
+Use this page for the package surface. Use:
+
+- [ORP RFC](/docs/orp-rfc) for the protocol specification
+- [ORP bandwidth analysis](/docs/orp-analysis) for scaling estimates
+
+## Demo
+
+The workspace includes `examples/orp-demo`, which demonstrates:
+
+1. inventory reconciliation over document summaries
+2. per-document operation reconciliation
+3. blob transfer for missing operations
+
+It uses a simple grow-only set CRDT and keeps snapshots disabled so the flow stays small and readable.

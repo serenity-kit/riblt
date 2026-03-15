@@ -1,20 +1,24 @@
 ---
 title: Overview
-description: riblt is the reconciliation engine; set-sync is the protocol layer built on top of it.
+description: riblt is the reconciliation engine; set-sync and ORP are protocol layers built on top of it.
 ---
 
-This workspace is split into two layers:
+This workspace is split into three layers:
 
 - `riblt`: a low-level TypeScript implementation of Rateless Invertible Bloom Lookup Tables.
 - `set-sync`: a JSON-first client/server protocol that uses `riblt` frames to reconcile two sets.
+- `orp`: a document-scoped operation reconciliation protocol for opaque operations.
 
-Use `riblt` directly if you need raw sketch generation and merge/decode control. Use `set-sync` if you want a higher-level session workflow between a client and server.
+Use `riblt` directly if you need raw sketch generation and merge/decode control. Use `set-sync` if you want a higher-level session workflow between a client and server. Use `orp` if you need document inventory plus per-document operation repair.
 
 ## Packages
 
 <Cards>
   <Card title="riblt" href="/docs/riblt" />
   <Card title="set-sync" href="/docs/setsync" />
+  <Card title="orp" href="/docs/orp" />
+  <Card title="orp rfc" href="/docs/orp-rfc" />
+  <Card title="orp analysis" href="/docs/orp-analysis" />
 </Cards>
 
 ## Workspace Layout
@@ -23,8 +27,10 @@ Use `riblt` directly if you need raw sketch generation and merge/decode control.
 packages/
   riblt/      core reconciliation engine
   setsync/    protocol wrapper around riblt
+  orp/        operation reconciliation types and validators
 examples/
   browser-server/   browser + Node demo
+  orp-demo/         standalone ORP demonstration
 docs/
   content/docs/     this documentation site
 ```
@@ -34,4 +40,5 @@ docs/
 1. Each side starts with a local set of string identifiers.
 2. `riblt` turns that set into coded symbols that can be streamed incrementally.
 3. `set-sync` wraps those coded symbols in session messages like `hello`, `sync`, and `sync-response`.
-4. Both sides keep exchanging frames until the diff can be decoded.
+4. `orp` applies the same reconciliation primitive to document inventories and then to operation ids for differing documents.
+5. Both sides keep exchanging frames until the diff can be decoded.
