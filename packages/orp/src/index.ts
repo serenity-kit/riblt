@@ -1,4 +1,6 @@
 import {
+  RIBLT_MAX_CODED_SYMBOLS,
+  RIBLT_MAX_SYMBOL_SIZE,
   createRiblt,
   type RibltDecodeResult,
   type RibltMessage,
@@ -277,8 +279,13 @@ export interface OrpTranscript {
 }
 
 export const ORP_DEFAULT_ROUND_LIMIT = 128;
+export const ORP_DEFAULT_CHUNK_TRANSFER_THRESHOLD = 4;
+export const ORP_DEFAULT_SNAPSHOT_TAIL_COUNT_THRESHOLD = 12;
+export const ORP_MAX_ITEMS = 65536;
 
 const HEX_16 = /^[0-9a-f]{16}$/;
+const HEX_32 = /^[0-9a-f]{32}$/;
+const BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:|[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)$/;
 
 export function orpParametersToRibltOptions(params: OrpParameters): RibltOptions {
   return {
@@ -332,6 +339,585 @@ export function exchangeOrpRibltFrames<TFrame extends OrpFrameMessage>(
   }
 
   throw new Error("ORP RIBLT exchange did not complete within the round limit");
+}
+
+export interface OrpInventoryEntry {
+  entryId: string;
+  docHandle: DocHandle;
+  summaryHash: string;
+}
+
+export interface OrpChunkEntry {
+  entryId: string;
+  chunkId: ChunkId;
+  summaryHash: string;
+}
+
+export interface OrpSnapshotPayload {
+  snapshot: SnapshotUnit;
+  tailOps: BlobUnit[];
+}
+
+export interface OrpPeerDocumentView {
+  summary: DocSummary;
+  recentSnapshots: SnapshotId[];
+  chunking?: OrpChunkingDescriptor;
+}
+
+export interface OrpPeerAdapter {
+  listInventoryEntries(): OrpInventoryEntry[];
+  getDocumentView(docHandle: DocHandle): OrpPeerDocumentView;
+  listChunkEntries(docHandle: DocHandle): OrpChunkEntry[];
+  listOperationIds(docHandle: DocHandle, basisSnapshotId?: SnapshotId): OpId[];
+  getBlobUnits(docHandle: DocHandle, opIds: OpId[]): BlobUnit[];
+  applyBlobUnits(docHandle: DocHandle, ops: BlobUnit[]): void;
+  getChunkUnits(docHandle: DocHandle, chunkIds: ChunkId[]): ChunkUnit[];
+  applyChunkUnits(docHandle: DocHandle, chunks: ChunkUnit[]): void;
+  getSnapshotPayload(docHandle: DocHandle, snapshotId: SnapshotId): OrpSnapshotPayload | undefined;
+  applySnapshotPayload(docHandle: DocHandle, payload: OrpSnapshotPayload): void;
+}
+
+export interface OrpSessionOptions {
+  sessionId: SessionId;
+  scopeId: ScopeId;
+  inventoryParams: OrpParameters;
+  operationParams: OrpParameters;
+  chunkTransferThreshold?: number;
+  snapshotTailCountThreshold?: number;
+  roundLimit?: number;
+}
+
+export type OrpSessionPhase = "idle" | "inventory" | "document" | "complete";
+
+export type OrpDocumentStrategy =
+  | "noop"
+  | "snapshot"
+  | "snapshot+chunk"
+  | "snapshot+ops"
+  | "chunk"
+  | "ops";
+
+export interface OrpSessionState {
+  phase: OrpSessionPhase;
+  currentDoc?: DocHandle;
+  completedDocs: DocHandle[];
+  transcriptLength: number;
+}
+
+export interface OrpDocumentSyncResult {
+  docHandle: DocHandle;
+  strategy: OrpDocumentStrategy;
+  differingChunks: ChunkDiffEntry[];
+  initiatorMissingOpIds: OpId[];
+  responderMissingOpIds: OpId[];
+  snapshotProvider?: "initiator" | "responder";
+  snapshotId?: SnapshotId;
+}
+
+export interface OrpSessionResult {
+  transcript: OrpTranscriptEvent[];
+  differingDocs: InventoryDiffEntry[];
+  documents: OrpDocumentSyncResult[];
+}
+
+interface SnapshotPlan {
+  provider: "initiator" | "responder";
+  requester: "initiator" | "responder";
+  snapshotId: SnapshotId;
+}
+
+export class OrpSession {
+  private readonly initiator: OrpPeerAdapter;
+  private readonly responder: OrpPeerAdapter;
+  private readonly options: Required<OrpSessionOptions>;
+  private readonly transcript: OrpTranscriptEvent[] = [];
+  private readonly state: OrpSessionState = {
+    phase: "idle",
+    completedDocs: [],
+    transcriptLength: 0,
+  };
+
+  constructor(
+    initiator: OrpPeerAdapter,
+    responder: OrpPeerAdapter,
+    options: OrpSessionOptions
+  ) {
+    this.initiator = initiator;
+    this.responder = responder;
+    this.options = {
+      ...options,
+      chunkTransferThreshold: options.chunkTransferThreshold ?? ORP_DEFAULT_CHUNK_TRANSFER_THRESHOLD,
+      snapshotTailCountThreshold:
+        options.snapshotTailCountThreshold ?? ORP_DEFAULT_SNAPSHOT_TAIL_COUNT_THRESHOLD,
+      roundLimit: options.roundLimit ?? ORP_DEFAULT_ROUND_LIMIT,
+    };
+  }
+
+  getState(): OrpSessionState {
+    return {
+      phase: this.state.phase,
+      currentDoc: this.state.currentDoc,
+      completedDocs: [...this.state.completedDocs],
+      transcriptLength: this.transcript.length,
+    };
+  }
+
+  run(): OrpSessionResult {
+    this.state.phase = "inventory";
+    this.record(
+      "initiator",
+      "responder",
+      "Negotiate the scope and RIBLT parameters.",
+      {
+        type: "orp/hello",
+        version: ORP_PROTOCOL_VERSION,
+        sessionId: this.options.sessionId,
+        scopeId: this.options.scopeId,
+        inventoryParams: this.options.inventoryParams,
+        operationParams: this.options.operationParams,
+      }
+    );
+
+    const differingDocs = this.reconcileInventory();
+    const documents = differingDocs.map((entry) => {
+      this.state.phase = "document";
+      this.state.currentDoc = entry.docHandle;
+      const result = this.repairDocument(entry.docHandle);
+      this.state.completedDocs.push(entry.docHandle);
+      this.state.currentDoc = undefined;
+      return result;
+    });
+
+    this.state.phase = "complete";
+    return {
+      transcript: [...this.transcript],
+      differingDocs,
+      documents,
+    };
+  }
+
+  private reconcileInventory(): InventoryDiffEntry[] {
+    const initiatorEntries = this.initiator.listInventoryEntries();
+    const responderEntries = this.responder.listInventoryEntries();
+    const initiatorById = new Map(initiatorEntries.map((entry) => [entry.entryId, entry]));
+    const responderById = new Map(responderEntries.map((entry) => [entry.entryId, entry]));
+
+    const { leftResult } = exchangeOrpRibltFrames({
+      leftIds: initiatorEntries.map((entry) => entry.entryId),
+      rightIds: responderEntries.map((entry) => entry.entryId),
+      params: this.options.inventoryParams,
+      roundLimit: this.options.roundLimit,
+      makeLeftFrame: (frame) => ({
+        type: "orp/inventory-frame",
+        version: ORP_PROTOCOL_VERSION,
+        sessionId: this.options.sessionId,
+        frame,
+      }),
+      onLeftFrame: (message) => {
+        this.record("initiator", "responder", "Exchange inventory frames.", message);
+      },
+      onRightFrame: (message) => {
+        this.record("responder", "initiator", "Exchange inventory frames.", message);
+      },
+    });
+
+    const diffByDoc = new Map<string, InventoryDiffEntry>();
+    for (const entryId of leftResult.extra) {
+      const entry = initiatorById.get(entryId);
+      if (entry) {
+        diffByDoc.set(entry.docHandle, {
+          ...(diffByDoc.get(entry.docHandle) ?? { docHandle: entry.docHandle }),
+          localSummaryHash: entry.summaryHash,
+        });
+      }
+    }
+    for (const entryId of leftResult.missing) {
+      const entry = responderById.get(entryId);
+      if (entry) {
+        diffByDoc.set(entry.docHandle, {
+          ...(diffByDoc.get(entry.docHandle) ?? { docHandle: entry.docHandle }),
+          remoteSummaryHash: entry.summaryHash,
+        });
+      }
+    }
+
+    const differingDocs = [...diffByDoc.values()].sort((a, b) => a.docHandle.localeCompare(b.docHandle));
+    this.record("initiator", "responder", "Report the exact inventory mismatches once RIBLT decoding completes.", {
+      type: "orp/inventory-done",
+      version: ORP_PROTOCOL_VERSION,
+      sessionId: this.options.sessionId,
+      differingDocs,
+    });
+    return differingDocs;
+  }
+
+  private repairDocument(docHandle: DocHandle): OrpDocumentSyncResult {
+    this.record("initiator", "responder", `Open repair for ${docHandle}.`, {
+      type: "orp/doc-open",
+      version: ORP_PROTOCOL_VERSION,
+      sessionId: this.options.sessionId,
+      docHandle,
+    });
+
+    this.recordDocumentStatus("responder", "initiator", docHandle, `Advertise the responder summary and chunk summaries for ${docHandle}.`);
+    this.recordDocumentStatus("initiator", "responder", docHandle, `Advertise the initiator summary and chunk summaries for ${docHandle}.`);
+
+    let initiatorView = this.initiator.getDocumentView(docHandle);
+    let responderView = this.responder.getDocumentView(docHandle);
+    let snapshotPlan = this.chooseSnapshotPlan(initiatorView, responderView);
+    let snapshotProvider: "initiator" | "responder" | undefined;
+    let snapshotId: SnapshotId | undefined;
+
+    if (snapshotPlan) {
+      this.transferSnapshot(docHandle, snapshotPlan);
+      snapshotProvider = snapshotPlan.provider;
+      snapshotId = snapshotPlan.snapshotId;
+      initiatorView = this.initiator.getDocumentView(docHandle);
+      responderView = this.responder.getDocumentView(docHandle);
+    }
+
+    if (sameDocSummary(initiatorView.summary, responderView.summary)) {
+      return {
+        docHandle,
+        strategy: snapshotPlan ? "snapshot" : "noop",
+        differingChunks: [],
+        initiatorMissingOpIds: [],
+        responderMissingOpIds: [],
+        snapshotProvider,
+        snapshotId,
+      };
+    }
+
+    const differingChunks =
+      initiatorView.chunking && responderView.chunking
+        ? this.reconcileChunks(docHandle, initiatorView, responderView)
+        : [];
+
+    if (
+      differingChunks.length > 0 &&
+      this.shouldTransferChunks(differingChunks, initiatorView, responderView)
+    ) {
+      this.transferChunks(docHandle, differingChunks.map((entry) => entry.chunkId));
+      initiatorView = this.initiator.getDocumentView(docHandle);
+      responderView = this.responder.getDocumentView(docHandle);
+      if (sameDocSummary(initiatorView.summary, responderView.summary)) {
+        return {
+          docHandle,
+          strategy: snapshotPlan ? "snapshot+chunk" : "chunk",
+          differingChunks,
+          initiatorMissingOpIds: [],
+          responderMissingOpIds: [],
+          snapshotProvider,
+          snapshotId,
+        };
+      }
+    }
+
+    const { initiatorMissingOpIds, responderMissingOpIds } = this.repairOperations(docHandle);
+    return {
+      docHandle,
+      strategy: snapshotPlan ? "snapshot+ops" : "ops",
+      differingChunks,
+      initiatorMissingOpIds,
+      responderMissingOpIds,
+      snapshotProvider,
+      snapshotId,
+    };
+  }
+
+  private reconcileChunks(
+    docHandle: DocHandle,
+    initiatorView: OrpPeerDocumentView,
+    responderView: OrpPeerDocumentView
+  ): ChunkDiffEntry[] {
+    const initiatorEntries = this.initiator.listChunkEntries(docHandle);
+    const responderEntries = this.responder.listChunkEntries(docHandle);
+    const initiatorById = new Map(initiatorEntries.map((entry) => [entry.entryId, entry]));
+    const responderById = new Map(responderEntries.map((entry) => [entry.entryId, entry]));
+
+    const { leftResult } = exchangeOrpRibltFrames({
+      leftIds: initiatorEntries.map((entry) => entry.entryId),
+      rightIds: responderEntries.map((entry) => entry.entryId),
+      params: this.options.operationParams,
+      roundLimit: this.options.roundLimit,
+      makeLeftFrame: (frame) => ({
+        type: "orp/chunk-frame",
+        version: ORP_PROTOCOL_VERSION,
+        sessionId: this.options.sessionId,
+        docHandle,
+        frame,
+      }),
+      onLeftFrame: (message) => {
+        this.record("initiator", "responder", `Exchange chunk frames for ${docHandle}.`, message);
+      },
+      onRightFrame: (message) => {
+        this.record("responder", "initiator", `Exchange chunk frames for ${docHandle}.`, message);
+      },
+    });
+
+    const diffByChunk = new Map<string, ChunkDiffEntry>();
+    for (const entryId of leftResult.extra) {
+      const entry = initiatorById.get(entryId);
+      if (entry) {
+        diffByChunk.set(entry.chunkId, {
+          ...(diffByChunk.get(entry.chunkId) ?? { chunkId: entry.chunkId }),
+          localSummaryHash: entry.summaryHash,
+        });
+      }
+    }
+    for (const entryId of leftResult.missing) {
+      const entry = responderById.get(entryId);
+      if (entry) {
+        diffByChunk.set(entry.chunkId, {
+          ...(diffByChunk.get(entry.chunkId) ?? { chunkId: entry.chunkId }),
+          remoteSummaryHash: entry.summaryHash,
+        });
+      }
+    }
+
+    const differingChunks = [...diffByChunk.values()].sort((a, b) => a.chunkId.localeCompare(b.chunkId));
+    this.record("initiator", "responder", `List the deterministic chunk mismatches for ${docHandle}.`, {
+      type: "orp/chunk-done",
+      version: ORP_PROTOCOL_VERSION,
+      sessionId: this.options.sessionId,
+      docHandle,
+      differingChunks,
+    });
+
+    void initiatorView;
+    void responderView;
+    return differingChunks;
+  }
+
+  private transferChunks(docHandle: DocHandle, chunkIds: ChunkId[]): void {
+    this.record("initiator", "responder", `Request deterministic chunk blobs for ${docHandle}.`, {
+      type: "orp/chunk-get",
+      version: ORP_PROTOCOL_VERSION,
+      sessionId: this.options.sessionId,
+      docHandle,
+      chunkIds,
+    });
+    const responderChunks = this.responder.getChunkUnits(docHandle, chunkIds);
+    this.record("responder", "initiator", `Transfer chunk blobs for ${docHandle} instead of many individual operations.`, {
+      type: "orp/chunk-put",
+      version: ORP_PROTOCOL_VERSION,
+      sessionId: this.options.sessionId,
+      docHandle,
+      chunks: responderChunks,
+    });
+    this.initiator.applyChunkUnits(docHandle, responderChunks);
+
+    this.record("responder", "initiator", `Request deterministic chunk blobs for ${docHandle}.`, {
+      type: "orp/chunk-get",
+      version: ORP_PROTOCOL_VERSION,
+      sessionId: this.options.sessionId,
+      docHandle,
+      chunkIds,
+    });
+    const initiatorChunks = this.initiator.getChunkUnits(docHandle, chunkIds);
+    this.record("initiator", "responder", `Transfer chunk blobs for ${docHandle} instead of many individual operations.`, {
+      type: "orp/chunk-put",
+      version: ORP_PROTOCOL_VERSION,
+      sessionId: this.options.sessionId,
+      docHandle,
+      chunks: initiatorChunks,
+    });
+    this.responder.applyChunkUnits(docHandle, initiatorChunks);
+  }
+
+  private repairOperations(docHandle: DocHandle): {
+    initiatorMissingOpIds: OpId[];
+    responderMissingOpIds: OpId[];
+  } {
+    const { leftResult, rightResult } = exchangeOrpRibltFrames({
+      leftIds: this.initiator.listOperationIds(docHandle),
+      rightIds: this.responder.listOperationIds(docHandle),
+      params: this.options.operationParams,
+      roundLimit: this.options.roundLimit,
+      makeLeftFrame: (frame) => ({
+        type: "orp/doc-frame",
+        version: ORP_PROTOCOL_VERSION,
+        sessionId: this.options.sessionId,
+        docHandle,
+        frame,
+      }),
+      onLeftFrame: (message) => {
+        this.record("initiator", "responder", `Exchange operation frames for ${docHandle}.`, message);
+      },
+      onRightFrame: (message) => {
+        this.record("responder", "initiator", `Exchange operation frames for ${docHandle}.`, message);
+      },
+    });
+
+    const initiatorMissingOpIds = [...leftResult.missing].sort();
+    const responderMissingOpIds = [...rightResult.missing].sort();
+    this.record("initiator", "responder", `List operations the initiator is missing for ${docHandle}.`, {
+      type: "orp/doc-done",
+      version: ORP_PROTOCOL_VERSION,
+      sessionId: this.options.sessionId,
+      docHandle,
+      missingOpIds: initiatorMissingOpIds,
+    });
+    this.record("responder", "initiator", `List operations the responder is missing for ${docHandle}.`, {
+      type: "orp/doc-done",
+      version: ORP_PROTOCOL_VERSION,
+      sessionId: this.options.sessionId,
+      docHandle,
+      missingOpIds: responderMissingOpIds,
+    });
+
+    if (initiatorMissingOpIds.length > 0) {
+      this.transferMissingOps("initiator", "responder", docHandle, initiatorMissingOpIds);
+    }
+    if (responderMissingOpIds.length > 0) {
+      this.transferMissingOps("responder", "initiator", docHandle, responderMissingOpIds);
+    }
+
+    return { initiatorMissingOpIds, responderMissingOpIds };
+  }
+
+  private transferMissingOps(
+    requester: "initiator" | "responder",
+    provider: "initiator" | "responder",
+    docHandle: DocHandle,
+    opIds: OpId[]
+  ): void {
+    this.record(requester, provider, `Request missing operation blobs for ${docHandle}.`, {
+      type: "orp/blob-get",
+      version: ORP_PROTOCOL_VERSION,
+      sessionId: this.options.sessionId,
+      docHandle,
+      opIds,
+    });
+    const providerAdapter = provider === "initiator" ? this.initiator : this.responder;
+    const requesterAdapter = requester === "initiator" ? this.initiator : this.responder;
+    const ops = providerAdapter.getBlobUnits(docHandle, opIds);
+    this.record(provider, requester, `Send opaque operation blobs for ${docHandle}.`, {
+      type: "orp/blob-put",
+      version: ORP_PROTOCOL_VERSION,
+      sessionId: this.options.sessionId,
+      docHandle,
+      ops,
+    });
+    requesterAdapter.applyBlobUnits(docHandle, ops);
+  }
+
+  private transferSnapshot(docHandle: DocHandle, plan: SnapshotPlan): void {
+    this.record(plan.requester, plan.provider, `Request snapshot ${plan.snapshotId} for ${docHandle}.`, {
+      type: "orp/snapshot-get",
+      version: ORP_PROTOCOL_VERSION,
+      sessionId: this.options.sessionId,
+      docHandle,
+      snapshotId: plan.snapshotId,
+    });
+
+    const providerAdapter = plan.provider === "initiator" ? this.initiator : this.responder;
+    const requesterAdapter = plan.requester === "initiator" ? this.initiator : this.responder;
+    const payload = providerAdapter.getSnapshotPayload(docHandle, plan.snapshotId);
+    if (!payload) {
+      throw new Error(`missing snapshot ${plan.snapshotId} for ${docHandle}`);
+    }
+
+    this.record(plan.provider, plan.requester, `Transfer snapshot ${plan.snapshotId} for ${docHandle}.`, {
+      type: "orp/snapshot-put",
+      version: ORP_PROTOCOL_VERSION,
+      sessionId: this.options.sessionId,
+      docHandle,
+      snapshot: payload.snapshot,
+      tailOps: payload.tailOps,
+    });
+    requesterAdapter.applySnapshotPayload(docHandle, payload);
+  }
+
+  private chooseSnapshotPlan(
+    initiatorView: OrpPeerDocumentView,
+    responderView: OrpPeerDocumentView
+  ): SnapshotPlan | undefined {
+    if (
+      responderView.recentSnapshots.length > 0 &&
+      responderView.summary.tailCount >= this.options.snapshotTailCountThreshold &&
+      responderView.summary.tailCount >= initiatorView.summary.tailCount
+    ) {
+      return {
+        provider: "responder",
+        requester: "initiator",
+        snapshotId: responderView.recentSnapshots[0],
+      };
+    }
+
+    if (
+      initiatorView.recentSnapshots.length > 0 &&
+      initiatorView.summary.tailCount >= this.options.snapshotTailCountThreshold &&
+      initiatorView.summary.tailCount > responderView.summary.tailCount
+    ) {
+      return {
+        provider: "initiator",
+        requester: "responder",
+        snapshotId: initiatorView.recentSnapshots[0],
+      };
+    }
+
+    return undefined;
+  }
+
+  private shouldTransferChunks(
+    differingChunks: ChunkDiffEntry[],
+    initiatorView: OrpPeerDocumentView,
+    responderView: OrpPeerDocumentView
+  ): boolean {
+    const initiatorCounts = new Map(
+      (initiatorView.chunking?.summaries ?? []).map((summary) => [summary.chunkId, summary.opCount])
+    );
+    const responderCounts = new Map(
+      (responderView.chunking?.summaries ?? []).map((summary) => [summary.chunkId, summary.opCount])
+    );
+    const estimatedOps = differingChunks.reduce((total, chunk) => {
+      return total + Math.max(initiatorCounts.get(chunk.chunkId) ?? 0, responderCounts.get(chunk.chunkId) ?? 0);
+    }, 0);
+    return estimatedOps >= this.options.chunkTransferThreshold;
+  }
+
+  private recordDocumentStatus(
+    from: "initiator" | "responder",
+    to: "initiator" | "responder",
+    docHandle: DocHandle,
+    note: string
+  ): void {
+    const adapter = from === "initiator" ? this.initiator : this.responder;
+    const view = adapter.getDocumentView(docHandle);
+    this.record(from, to, note, {
+      type: "orp/doc-status",
+      version: ORP_PROTOCOL_VERSION,
+      sessionId: this.options.sessionId,
+      docHandle,
+      summary: view.summary,
+      recentSnapshots: view.recentSnapshots,
+      chunking: view.chunking,
+    });
+  }
+
+  private record(
+    from: "initiator" | "responder",
+    to: "initiator" | "responder",
+    note: string,
+    message: OrpMessage
+  ): void {
+    assertValidOrpMessage(message);
+    this.transcript.push({ from, to, note, message });
+    this.state.transcriptLength = this.transcript.length;
+  }
+}
+
+function sameDocSummary(left: DocSummary, right: DocSummary): boolean {
+  return (
+    left.docHandle === right.docHandle &&
+    left.basisSnapshotId === right.basisSnapshotId &&
+    left.tailCount === right.tailCount &&
+    left.xorA === right.xorA &&
+    left.xorB === right.xorB &&
+    left.sumA === right.sumA &&
+    left.sumB === right.sumB
+  );
 }
 
 class OrpRibltSession implements OrpRibltSessionApi {
@@ -669,9 +1255,9 @@ export function validateOrpMessage(value: unknown): OrpValidationIssue[] {
           return;
         }
         validateString(entry.docHandle, `${path}.docHandle`, issues);
-        validateOptionalString(entry.localSummaryHash, `${path}.localSummaryHash`, issues);
-        validateOptionalString(entry.remoteSummaryHash, `${path}.remoteSummaryHash`, issues);
-      });
+        validateOptionalDigest(entry.localSummaryHash, `${path}.localSummaryHash`, issues);
+        validateOptionalDigest(entry.remoteSummaryHash, `${path}.remoteSummaryHash`, issues);
+      }, ORP_MAX_ITEMS);
       break;
     case "orp/doc-open":
       validateString(value.docHandle, "$.docHandle", issues);
@@ -681,7 +1267,7 @@ export function validateOrpMessage(value: unknown): OrpValidationIssue[] {
       validateDocSummaryInto(value.summary, "$.summary", issues);
       validateArray(value.recentSnapshots, "$.recentSnapshots", issues, (snapshotId, path) => {
         validateString(snapshotId, path, issues);
-      });
+      }, ORP_MAX_ITEMS);
       validateOptionalChunking(value.chunking, "$.chunking", issues);
       break;
     case "orp/chunk-frame":
@@ -696,21 +1282,21 @@ export function validateOrpMessage(value: unknown): OrpValidationIssue[] {
           return;
         }
         validateString(entry.chunkId, `${path}.chunkId`, issues);
-        validateOptionalString(entry.localSummaryHash, `${path}.localSummaryHash`, issues);
-        validateOptionalString(entry.remoteSummaryHash, `${path}.remoteSummaryHash`, issues);
-      });
+        validateOptionalDigest(entry.localSummaryHash, `${path}.localSummaryHash`, issues);
+        validateOptionalDigest(entry.remoteSummaryHash, `${path}.remoteSummaryHash`, issues);
+      }, ORP_MAX_ITEMS);
       break;
     case "orp/chunk-get":
       validateString(value.docHandle, "$.docHandle", issues);
       validateArray(value.chunkIds, "$.chunkIds", issues, (chunkId, path) => {
         validateString(chunkId, path, issues);
-      });
+      }, ORP_MAX_ITEMS);
       break;
     case "orp/chunk-put":
       validateString(value.docHandle, "$.docHandle", issues);
       validateArray(value.chunks, "$.chunks", issues, (chunk, path) => {
         validateChunkUnit(chunk, path, issues);
-      });
+      }, ORP_MAX_ITEMS);
       break;
     case "orp/doc-frame":
       validateString(value.docHandle, "$.docHandle", issues);
@@ -722,19 +1308,19 @@ export function validateOrpMessage(value: unknown): OrpValidationIssue[] {
       validateOptionalString(value.basisSnapshotId, "$.basisSnapshotId", issues);
       validateArray(value.missingOpIds, "$.missingOpIds", issues, (opId, path) => {
         validateString(opId, path, issues);
-      });
+      }, ORP_MAX_ITEMS);
       break;
     case "orp/blob-get":
       validateString(value.docHandle, "$.docHandle", issues);
       validateArray(value.opIds, "$.opIds", issues, (opId, path) => {
         validateString(opId, path, issues);
-      });
+      }, ORP_MAX_ITEMS);
       break;
     case "orp/blob-put":
       validateString(value.docHandle, "$.docHandle", issues);
       validateArray(value.ops, "$.ops", issues, (op, path) => {
         validateBlobUnit(op, path, issues);
-      });
+      }, ORP_MAX_ITEMS);
       break;
     case "orp/snapshot-get":
       validateString(value.docHandle, "$.docHandle", issues);
@@ -745,7 +1331,7 @@ export function validateOrpMessage(value: unknown): OrpValidationIssue[] {
       validateSnapshotUnit(value.snapshot, "$.snapshot", issues);
       validateArray(value.tailOps, "$.tailOps", issues, (op, path) => {
         validateBlobUnit(op, path, issues);
-      });
+      }, ORP_MAX_ITEMS);
       break;
     default:
       issues.push({ path: "$.type", message: `unsupported ORP message type: ${type}` });
@@ -786,7 +1372,7 @@ export function validateOrpTranscript(value: unknown): OrpValidationIssue[] {
     validateEnum(event.to, `${path}.to`, ["initiator", "responder"], issues);
     validateString(event.note, `${path}.note`, issues);
     validateNestedIssues(validateOrpMessage(event.message), `${path}.message`, issues);
-  });
+  }, ORP_MAX_ITEMS);
 
   return issues;
 }
@@ -848,6 +1434,18 @@ function validateParameters(
 
   validatePositiveInteger(value.symbolSize, `${path}.symbolSize`, issues);
   validatePositiveInteger(value.batchSize, `${path}.batchSize`, issues);
+  if (typeof value.symbolSize === "number" && value.symbolSize > RIBLT_MAX_SYMBOL_SIZE) {
+    issues.push({
+      path: `${path}.symbolSize`,
+      message: `must be <= ${RIBLT_MAX_SYMBOL_SIZE}`,
+    });
+  }
+  if (typeof value.batchSize === "number" && value.batchSize > RIBLT_MAX_CODED_SYMBOLS) {
+    issues.push({
+      path: `${path}.batchSize`,
+      message: `must be <= ${RIBLT_MAX_CODED_SYMBOLS}`,
+    });
+  }
 
   if (typeof value.hashSeed !== "string" || !HEX_16.test(value.hashSeed)) {
     issues.push({
@@ -882,16 +1480,22 @@ function validateRibltFrame(
   }
 
   validatePositiveInteger(value.symbolSize, `${path}.symbolSize`, issues);
-  validateString(value.seed, `${path}.seed`, issues);
+  if (typeof value.symbolSize === "number" && value.symbolSize > RIBLT_MAX_SYMBOL_SIZE) {
+    issues.push({
+      path: `${path}.symbolSize`,
+      message: `must be <= ${RIBLT_MAX_SYMBOL_SIZE}`,
+    });
+  }
+  validateSeed(value.seed, `${path}.seed`, issues);
   validateArray(value.coded, `${path}.coded`, issues, (coded, codedPath) => {
     if (!isRecord(coded)) {
       issues.push({ path: codedPath, message: "must be an object" });
       return;
     }
     validateInteger(coded.count, `${codedPath}.count`, issues);
-    validateString(coded.hash, `${codedPath}.hash`, issues);
-    validateString(coded.symbol, `${codedPath}.symbol`, issues);
-  });
+    validateDigest(coded.hash, `${codedPath}.hash`, issues);
+    validateBase64String(coded.symbol, `${codedPath}.symbol`, issues);
+  }, RIBLT_MAX_CODED_SYMBOLS);
 }
 
 function validateDocSummaryInto(
@@ -907,10 +1511,10 @@ function validateDocSummaryInto(
   validateString(value.docHandle, `${path}.docHandle`, issues);
   validateOptionalString(value.basisSnapshotId, `${path}.basisSnapshotId`, issues);
   validateNonNegativeInteger(value.tailCount, `${path}.tailCount`, issues);
-  validateString(value.xorA, `${path}.xorA`, issues);
-  validateString(value.xorB, `${path}.xorB`, issues);
-  validateString(value.sumA, `${path}.sumA`, issues);
-  validateString(value.sumB, `${path}.sumB`, issues);
+  validateDigest(value.xorA, `${path}.xorA`, issues);
+  validateDigest(value.xorB, `${path}.xorB`, issues);
+  validateDigest(value.sumA, `${path}.sumA`, issues);
+  validateDigest(value.sumB, `${path}.sumB`, issues);
 }
 
 function validateChunkSummaryInto(
@@ -925,10 +1529,10 @@ function validateChunkSummaryInto(
 
   validateString(value.chunkId, `${path}.chunkId`, issues);
   validateNonNegativeInteger(value.opCount, `${path}.opCount`, issues);
-  validateString(value.xorA, `${path}.xorA`, issues);
-  validateString(value.xorB, `${path}.xorB`, issues);
-  validateString(value.sumA, `${path}.sumA`, issues);
-  validateString(value.sumB, `${path}.sumB`, issues);
+  validateDigest(value.xorA, `${path}.xorA`, issues);
+  validateDigest(value.xorB, `${path}.xorB`, issues);
+  validateDigest(value.sumA, `${path}.sumA`, issues);
+  validateDigest(value.sumB, `${path}.sumB`, issues);
 }
 
 function validateBlobUnit(
@@ -958,7 +1562,7 @@ function validateChunkUnit(
   validateString(value.chunkId, `${path}.chunkId`, issues);
   validateArray(value.opIds, `${path}.opIds`, issues, (opId, itemPath) => {
     validateString(opId, itemPath, issues);
-  });
+  }, ORP_MAX_ITEMS);
   validateString(value.blob, `${path}.blob`, issues);
 }
 
@@ -1001,7 +1605,7 @@ function validateChunkingDescriptor(
   validatePositiveInteger(value.bucketCount, `${path}.bucketCount`, issues);
   validateArray(value.summaries, `${path}.summaries`, issues, (summary, summaryPath) => {
     validateChunkSummaryInto(summary, summaryPath, issues);
-  });
+  }, ORP_MAX_ITEMS);
 }
 
 function validateString(
@@ -1023,6 +1627,47 @@ function validateOptionalString(
     return;
   }
   validateString(value, path, issues);
+}
+
+function validateDigest(
+  value: unknown,
+  path: string,
+  issues: OrpValidationIssue[]
+): void {
+  if (typeof value !== "string" || !HEX_32.test(value)) {
+    issues.push({ path, message: "must be a 32-character lowercase hex string" });
+  }
+}
+
+function validateOptionalDigest(
+  value: unknown,
+  path: string,
+  issues: OrpValidationIssue[]
+): void {
+  if (typeof value === "undefined") {
+    return;
+  }
+  validateDigest(value, path, issues);
+}
+
+function validateSeed(
+  value: unknown,
+  path: string,
+  issues: OrpValidationIssue[]
+): void {
+  if (typeof value !== "string" || !HEX_16.test(value)) {
+    issues.push({ path, message: "must be a 16-character lowercase hex string" });
+  }
+}
+
+function validateBase64String(
+  value: unknown,
+  path: string,
+  issues: OrpValidationIssue[]
+): void {
+  if (typeof value !== "string" || value.length === 0 || !BASE64.test(value)) {
+    issues.push({ path, message: "must be a valid base64 string" });
+  }
 }
 
 function validateInteger(
@@ -1059,10 +1704,15 @@ function validateArray<T>(
   value: unknown,
   path: string,
   issues: OrpValidationIssue[],
-  validateItem: (item: T, path: string) => void
+  validateItem: (item: T, path: string) => void,
+  maxLength?: number
 ): void {
   if (!Array.isArray(value)) {
     issues.push({ path, message: "must be an array" });
+    return;
+  }
+  if (typeof maxLength === "number" && value.length > maxLength) {
+    issues.push({ path, message: `must contain at most ${maxLength} items` });
     return;
   }
 

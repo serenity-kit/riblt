@@ -11,6 +11,7 @@
   "homepage": "https://github.com/serenity-kit/orp#readme",
   "scripts": {
     "build": "pnpm -r --filter './packages/*' build && pnpm -r --filter './examples/*' build && pnpm --filter riblt-docs build",
+    "bench": "pnpm --filter riblt bench && pnpm --filter orp-demo-example bench",
     "docs:build": "pnpm --filter riblt-docs build",
     "docs:check": "pnpm --filter riblt-docs types:check",
     "test": "pnpm -r --filter './packages/*' test && pnpm -r --filter './examples/*' --if-present test",

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   ORP_PROTOCOL_VERSION,
   ORP_EXAMPLE_TRANSCRIPTS,
+  ORP_MAX_ITEMS,
   OrpValidationError,
   assertValidChunkSummary,
   assertValidOrpMessage,
@@ -73,10 +74,10 @@ describe("orp validators", () => {
       assertValidChunkSummary({
         chunkId: "bucket-0",
         opCount: 3,
-        xorA: "a",
-        xorB: "b",
-        sumA: "c",
-        sumB: "d",
+        xorA: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        xorB: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        sumA: "cccccccccccccccccccccccccccccccc",
+        sumB: "dddddddddddddddddddddddddddddddd",
       })
     ).not.toThrow();
 
@@ -147,6 +148,55 @@ describe("orp validators", () => {
         expect.objectContaining({ path: "$.chunking.bucketCount" }),
         expect.objectContaining({ path: "$.chunking.summaries[0].chunkId" }),
         expect.objectContaining({ path: "$.chunking.summaries[0].opCount" }),
+      ])
+    );
+  });
+
+  it("rejects malformed riblt frame seeds, hashes, and symbols", () => {
+    const issues = validateOrpMessage({
+      type: "orp/doc-frame",
+      version: 1,
+      sessionId: "session-1",
+      docHandle: "doc-1",
+      frame: {
+        v: 1,
+        hash: "xxh3-128",
+        symbolSize: 64,
+        seed: "not-a-seed",
+        coded: [
+          {
+            count: 1,
+            hash: "zz",
+            symbol: "***",
+          },
+        ],
+      },
+    });
+
+    expect(issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ path: "$.frame.seed" }),
+        expect.objectContaining({ path: "$.frame.coded[0].hash" }),
+        expect.objectContaining({ path: "$.frame.coded[0].symbol" }),
+      ])
+    );
+  });
+
+  it("rejects oversized arrays at the ORP boundary", () => {
+    const issues = validateOrpMessage({
+      type: "orp/blob-get",
+      version: 1,
+      sessionId: "session-1",
+      docHandle: "doc-1",
+      opIds: Array.from({ length: ORP_MAX_ITEMS + 1 }, () => "op-1"),
+    });
+
+    expect(issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          path: "$.opIds",
+          message: `must contain at most ${ORP_MAX_ITEMS} items`,
+        }),
       ])
     );
   });
