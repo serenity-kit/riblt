@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
-import { createRiblt, type RibltMessage, type RibltOptions } from "riblt";
 import {
   ORP_PROTOCOL_VERSION,
   assertValidOrpMessage,
+  exchangeOrpRibltFrames,
   type BlobUnit,
   type ChunkSummary,
   type ChunkUnit,
@@ -10,17 +10,15 @@ import {
   type OrpBlobGetMessage,
   type OrpBlobPutMessage,
   type OrpChunkDoneMessage,
-  type OrpChunkFrameMessage,
   type OrpChunkGetMessage,
   type OrpChunkPutMessage,
+  type OrpFrameMessage,
   type OrpChunkingDescriptor,
   type OrpDocDoneMessage,
-  type OrpDocFrameMessage,
   type OrpDocOpenMessage,
   type OrpDocStatusMessage,
   type OrpHelloMessage,
   type OrpInventoryDoneMessage,
-  type OrpInventoryFrameMessage,
   type OrpMessage,
   type OrpParameters,
 } from "@riblt/orp";
@@ -384,19 +382,29 @@ function reconcileInventory(
   const responderById = new Map(responderEntries.map((entry) => [entry.entryId, entry]));
 
   const { leftResult } = exchangeRibltSets(
-    initiator.name,
-    responder.name,
-    initiatorEntries.map((entry) => entry.entryId),
-    responderEntries.map((entry) => entry.entryId),
-    PARAMS,
-    (frame) => ({
-      type: "orp/inventory-frame",
-      version: ORP_PROTOCOL_VERSION,
-      sessionId: SESSION_ID,
-      frame,
-    }),
-    transcript,
-    "Exchange inventory frames."
+    {
+      leftIds: initiatorEntries.map((entry) => entry.entryId),
+      rightIds: responderEntries.map((entry) => entry.entryId),
+      params: PARAMS,
+      makeLeftFrame: (frame) => ({
+        type: "orp/inventory-frame",
+        version: ORP_PROTOCOL_VERSION,
+        sessionId: SESSION_ID,
+        frame,
+      }),
+      makeRightFrame: (frame) => ({
+        type: "orp/inventory-frame",
+        version: ORP_PROTOCOL_VERSION,
+        sessionId: SESSION_ID,
+        frame,
+      }),
+      onLeftFrame: (message) => {
+        record(transcript, initiator.name, responder.name, "Exchange inventory frames.", message);
+      },
+      onRightFrame: (message) => {
+        record(transcript, responder.name, initiator.name, "Exchange inventory frames.", message);
+      },
+    }
   );
 
   const diffByDoc = new Map<string, DiffPair>();
@@ -500,22 +508,31 @@ function reconcileChunks(
   const initiatorById = new Map(initiatorEntries.map((entry) => [entry.entryId, entry]));
   const responderById = new Map(responderEntries.map((entry) => [entry.entryId, entry]));
 
-  const { leftResult } = exchangeRibltSets(
-    initiator.name,
-    responder.name,
-    initiatorEntries.map((entry) => entry.entryId),
-    responderEntries.map((entry) => entry.entryId),
-    PARAMS,
-    (frame) => ({
+  const { leftResult } = exchangeRibltSets({
+    leftIds: initiatorEntries.map((entry) => entry.entryId),
+    rightIds: responderEntries.map((entry) => entry.entryId),
+    params: PARAMS,
+    makeLeftFrame: (frame) => ({
       type: "orp/chunk-frame",
       version: ORP_PROTOCOL_VERSION,
       sessionId: SESSION_ID,
       docHandle,
       frame,
     }),
-    transcript,
-    `Exchange chunk frames for ${docHandle}.`
-  );
+    makeRightFrame: (frame) => ({
+      type: "orp/chunk-frame",
+      version: ORP_PROTOCOL_VERSION,
+      sessionId: SESSION_ID,
+      docHandle,
+      frame,
+    }),
+    onLeftFrame: (message) => {
+      record(transcript, initiator.name, responder.name, `Exchange chunk frames for ${docHandle}.`, message);
+    },
+    onRightFrame: (message) => {
+      record(transcript, responder.name, initiator.name, `Exchange chunk frames for ${docHandle}.`, message);
+    },
+  });
 
   const diffByChunk = new Map<string, DiffPair>();
 
@@ -605,22 +622,31 @@ function repairOperations(
   transcript: TranscriptEntry[],
   docHandle: string
 ): void {
-  const { leftResult, rightResult } = exchangeRibltSets(
-    initiator.name,
-    responder.name,
-    initiator.getOperationIds(docHandle),
-    responder.getOperationIds(docHandle),
-    PARAMS,
-    (frame) => ({
+  const { leftResult, rightResult } = exchangeRibltSets({
+    leftIds: initiator.getOperationIds(docHandle),
+    rightIds: responder.getOperationIds(docHandle),
+    params: PARAMS,
+    makeLeftFrame: (frame) => ({
       type: "orp/doc-frame",
       version: ORP_PROTOCOL_VERSION,
       sessionId: SESSION_ID,
       docHandle,
       frame,
     }),
-    transcript,
-    `Exchange operation frames for ${docHandle}.`
-  );
+    makeRightFrame: (frame) => ({
+      type: "orp/doc-frame",
+      version: ORP_PROTOCOL_VERSION,
+      sessionId: SESSION_ID,
+      docHandle,
+      frame,
+    }),
+    onLeftFrame: (message) => {
+      record(transcript, initiator.name, responder.name, `Exchange operation frames for ${docHandle}.`, message);
+    },
+    onRightFrame: (message) => {
+      record(transcript, responder.name, initiator.name, `Exchange operation frames for ${docHandle}.`, message);
+    },
+  });
 
   const initiatorDone: OrpDocDoneMessage = {
     type: "orp/doc-done",
@@ -687,53 +713,10 @@ function transferMissingOps(
   receiver.applyBlobPut(put);
 }
 
-function exchangeRibltSets<TMessage extends OrpInventoryFrameMessage | OrpChunkFrameMessage | OrpDocFrameMessage>(
-  leftName: string,
-  rightName: string,
-  leftIds: string[],
-  rightIds: string[],
-  params: OrpParameters,
-  createMessage: (frame: RibltMessage) => TMessage,
-  transcript: TranscriptEntry[],
-  note: string
-): {
-  leftResult: { status: string; missing: string[]; extra: string[] };
-  rightResult: { status: string; missing: string[]; extra: string[] };
-} {
-  const left = createRiblt(toRibltOptions(params));
-  const right = createRiblt(toRibltOptions(params));
-  left.add(leftIds);
-  right.add(rightIds);
-
-  let leftResult = left.decode();
-  let rightResult = right.decode();
-  let rounds = 0;
-
-  while ((leftResult.status !== "complete" || rightResult.status !== "complete") && rounds < 128) {
-    if (rightResult.status !== "complete") {
-      const frame = left.encode({ count: params.batchSize, format: "object" }) as RibltMessage;
-      const message = createMessage(frame);
-      record(transcript, leftName, rightName, note, message);
-      right.merge(message.frame);
-      rightResult = right.decode();
-    }
-
-    if (leftResult.status !== "complete") {
-      const frame = right.encode({ count: params.batchSize, format: "object" }) as RibltMessage;
-      const message = createMessage(frame);
-      record(transcript, rightName, leftName, note, message);
-      left.merge(message.frame);
-      leftResult = left.decode();
-    }
-
-    rounds += 1;
-  }
-
-  if (leftResult.status !== "complete" || rightResult.status !== "complete") {
-    throw new Error("RIBLT reconciliation did not complete within the round limit");
-  }
-
-  return { leftResult, rightResult };
+function exchangeRibltSets<TMessage extends OrpFrameMessage>(
+  options: Parameters<typeof exchangeOrpRibltFrames<TMessage>>[0]
+) {
+  return exchangeOrpRibltFrames(options);
 }
 
 function record(
@@ -843,12 +826,4 @@ function digestToBigInt(digest: string): bigint {
 
 function bigIntToDigest(value: bigint): string {
   return (value & DIGEST_MASK).toString(16).padStart(32, "0");
-}
-
-function toRibltOptions(params: OrpParameters): RibltOptions {
-  return {
-    symbolSize: params.symbolSize,
-    batchSize: params.batchSize,
-    hashSeed: BigInt(`0x${params.hashSeed}`),
-  };
 }

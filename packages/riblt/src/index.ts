@@ -378,7 +378,12 @@ class RibltSession implements RibltSessionApi {
   }
 
   private mergeBinary(message: Uint8Array): void {
-    const decoded = decodeMessageBinary(message);
+    let decoded: ReturnType<typeof decodeMessageBinary>;
+    try {
+      decoded = decodeMessageBinary(message);
+    } catch (error) {
+      this.fail(error);
+    }
     this.ensureCompatible(decoded.symbolSize, decoded.seed);
     for (const coded of decoded.codedSymbols) {
       this.decoder.addCodedSymbol(coded);
@@ -388,29 +393,44 @@ class RibltSession implements RibltSessionApi {
 
   private mergeObject(message: RibltMessage): void {
     if (message.v !== VERSION || message.hash !== HASH_ID) {
-      throw new Error("unsupported message format");
+      this.fail("unsupported message format");
     }
-    const seed = seedFromHex(message.seed);
+    let seed: bigint;
+    try {
+      seed = seedFromHex(message.seed);
+    } catch (error) {
+      this.fail(error);
+    }
     this.ensureCompatible(message.symbolSize, seed);
-    for (const coded of message.coded) {
-      this.decoder.addCodedSymbol({
-        symbol: base64ToBytes(coded.symbol, message.symbolSize),
-        hash: hashFromHex(coded.hash),
-        count: coded.count,
-      });
+    try {
+      for (const coded of message.coded) {
+        this.decoder.addCodedSymbol({
+          symbol: base64ToBytes(coded.symbol, message.symbolSize),
+          hash: hashFromHex(coded.hash),
+          count: coded.count,
+        });
+      }
+    } catch (error) {
+      this.fail(error);
     }
     this.received += message.coded.length;
   }
 
   private ensureCompatible(symbolSize: number, seed: bigint): void {
     if (symbolSize !== this.symbolSize) {
-      this.failed = true;
-      throw new Error("symbolSize mismatch between peers");
+      this.fail("symbolSize mismatch between peers");
     }
     if ((seed & MASK_64) !== (this.hashSeed & MASK_64)) {
-      this.failed = true;
-      throw new Error("hash seed mismatch between peers");
+      this.fail("hash seed mismatch between peers");
     }
+  }
+
+  private fail(error: unknown): never {
+    this.failed = true;
+    if (error instanceof Error) {
+      throw error;
+    }
+    throw new Error(String(error));
   }
 }
 

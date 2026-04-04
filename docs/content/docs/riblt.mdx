@@ -87,6 +87,8 @@ Both peers must use the same:
 
 If a peer receives incompatible data, the session moves to `failed`.
 
+Malformed remote frames also move the session to `failed`. This makes transport-layer handling explicit and avoids silently continuing after incompatible input.
+
 ## Constraints
 
 - Identifiers are currently strings.
@@ -104,3 +106,13 @@ Use `riblt` directly when:
 - you are integrating with a non-browser or non-HTTP stack
 
 If you want a higher-level document and operation reconciliation workflow, use [orp](/docs/orp).
+
+## Interop Fixtures
+
+The workspace ships golden vectors in `packages/riblt/test/fixtures/interop-v1.json`. They pin:
+
+- object-format frames
+- binary frames
+- a complete streamed reconciliation transcript
+
+Use those fixtures when building another implementation that targets the same workspace wire format.

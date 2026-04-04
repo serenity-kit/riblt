@@ -3,7 +3,7 @@ title: orp
 description: The Operation Reconciliation Protocol package and API surface.
 ---
 
-`@riblt/orp` is the package layer for the Operation Reconciliation Protocol. It provides a transport-neutral TypeScript surface for ORP message types, validation helpers, and example transcripts on top of `riblt`.
+`@riblt/orp` is the package layer for the Operation Reconciliation Protocol. It provides a transport-neutral TypeScript surface for ORP message types, validation helpers, object-frame `riblt` session helpers, and example transcripts on top of `riblt`.
 
 ## Installation
 
@@ -21,36 +21,41 @@ ORP is meant for applications where:
 - you want exact repair without Merkle trees or checkpoint feeds
 - you may want an optional chunk layer between document inventory and single-op repair
 
-The package gives you the wire model and runtime guards. It does not impose a transport or a specific CRDT.
+The package gives you the wire model, runtime guards, and a thin object-frame wrapper for ORP `riblt` exchanges. It does not impose a transport or a specific CRDT.
 
 ## Basic Example
 
 ```ts
 import {
-  ORP_EXAMPLE_TRANSCRIPTS,
-  assertValidOrpMessage,
-  type OrpHelloMessage,
+  createOrpRibltSession,
+  exchangeOrpRibltFrames,
+  type OrpParameters,
 } from "@riblt/orp";
 
-const hello: OrpHelloMessage = {
-  type: "orp/hello",
-  version: 1,
-  sessionId: "orp-demo-session",
-  scopeId: "tenant-42",
-  inventoryParams: {
-    symbolSize: 64,
-    batchSize: 4,
-    hashSeed: "0000000000000007",
-  },
-  operationParams: {
-    symbolSize: 64,
-    batchSize: 4,
-    hashSeed: "0000000000000007",
-  },
+const params: OrpParameters = {
+  symbolSize: 64,
+  batchSize: 4,
+  hashSeed: "0000000000000007",
 };
 
-assertValidOrpMessage(hello);
-console.log(ORP_EXAMPLE_TRANSCRIPTS[0].name);
+const alice = createOrpRibltSession(params);
+const bob = createOrpRibltSession(params);
+alice.add(["id-1", "id-2", "alice-only"]);
+bob.add(["id-1", "id-2", "bob-only"]);
+
+const result = exchangeOrpRibltFrames({
+  leftIds: ["id-1", "id-2", "alice-only"],
+  rightIds: ["id-1", "id-2", "bob-only"],
+  params,
+  makeLeftFrame: (frame) => ({
+    type: "orp/inventory-frame",
+    version: 1,
+    sessionId: "session-1",
+    frame,
+  }),
+});
+
+console.log(result.rightResult.missing);
 ```
 
 ## Main Concepts
@@ -136,6 +141,14 @@ Each message includes:
 - message-specific fields
 
 The `frame` fields use object-format `riblt` messages so they are JSON-friendly by default.
+
+## Runtime Helpers
+
+For ORP transports that want the workspace object-frame format directly, the package also exports:
+
+- `createOrpRibltSession()`
+- `exchangeOrpRibltFrames()`
+- `orpParametersToRibltOptions()`
 
 ## Runtime Validation
 

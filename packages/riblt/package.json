@@ -29,6 +29,10 @@
   "author": "Naisho GmbH",
   "repository": {
     "type": "git",
-    "url": "git+https://example.com/your/repo.git"
-  }
+    "url": "git+https://github.com/serenity-kit/orp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/serenity-kit/orp/issues"
+  },
+  "homepage": "https://github.com/serenity-kit/orp/tree/main/packages/riblt#readme"
 }

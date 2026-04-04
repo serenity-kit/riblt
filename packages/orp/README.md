@@ -1,6 +1,6 @@
 # @riblt/orp
 
-`@riblt/orp` defines the wire messages, validation helpers, and example transcripts for the Operation Reconciliation Protocol.
+`@riblt/orp` defines the wire messages, validation helpers, object-frame RIBLT session helpers, and example transcripts for the Operation Reconciliation Protocol.
 
 ## Installation
 
@@ -20,6 +20,7 @@ The package exports:
 
 - TypeScript interfaces for all protocol messages
 - runtime validators and assertion helpers
+- object-frame `riblt` session helpers for ORP transports
 - reusable example transcripts
 
 ## Why Chunking Exists
@@ -42,28 +43,33 @@ ORP uses unordered-op chunking via stable hash buckets. It does not require a ca
 
 ```ts
 import {
-  assertValidOrpMessage,
-  ORP_EXAMPLE_TRANSCRIPTS,
-  type OrpHelloMessage,
+  createOrpRibltSession,
+  exchangeOrpRibltFrames,
+  type OrpParameters,
 } from "@riblt/orp";
 
-const hello: OrpHelloMessage = {
-  type: "orp/hello",
-  version: 1,
-  sessionId: "orp-demo-session",
-  scopeId: "tenant-42",
-  inventoryParams: {
-    symbolSize: 64,
-    batchSize: 4,
-    hashSeed: "0000000000000007",
-  },
-  operationParams: {
-    symbolSize: 64,
-    batchSize: 4,
-    hashSeed: "0000000000000007",
-  },
+const params: OrpParameters = {
+  symbolSize: 64,
+  batchSize: 4,
+  hashSeed: "0000000000000007",
 };
 
-assertValidOrpMessage(hello);
-console.log(ORP_EXAMPLE_TRANSCRIPTS[0].name);
+const alice = createOrpRibltSession(params);
+const bob = createOrpRibltSession(params);
+alice.add(["id-1", "id-2", "alice-only"]);
+bob.add(["id-1", "id-2", "bob-only"]);
+
+const result = exchangeOrpRibltFrames({
+  leftIds: ["id-1", "id-2", "alice-only"],
+  rightIds: ["id-1", "id-2", "bob-only"],
+  params,
+  makeLeftFrame: (frame) => ({
+    type: "orp/inventory-frame",
+    version: 1,
+    sessionId: "session-1",
+    frame,
+  }),
+});
+
+console.log(result.rightResult.missing); // ["alice-only"]
 ```

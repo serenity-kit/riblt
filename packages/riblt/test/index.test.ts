@@ -222,6 +222,34 @@ describe("riblt api behavior", () => {
     bad[0] = 255;
 
     expect(() => bob.merge(bad)).toThrow(/unsupported message version/);
+    expect(bob.decode().status).toBe("failed");
+  });
+
+  it("marks the session failed on invalid object messages", () => {
+    const alice = createRiblt({ symbolSize: 64, hashSeed: 0n });
+    const bob = createRiblt({ symbolSize: 64, hashSeed: 0n });
+    alice.add(["id-1"]);
+    bob.add(["id-2"]);
+
+    const message = alice.encode({ count: 1, format: "object" }) as {
+      v: number;
+      hash: string;
+      symbolSize: number;
+      seed: string;
+      coded: Array<{ count: number; hash: string; symbol: string }>;
+    };
+    const bad = {
+      ...message,
+      coded: [
+        {
+          ...message.coded[0],
+          hash: "zz",
+        },
+      ],
+    };
+
+    expect(() => bob.merge(bad as never)).toThrow();
+    expect(bob.decode().status).toBe("failed");
   });
 
   it("can reset and reuse", () => {

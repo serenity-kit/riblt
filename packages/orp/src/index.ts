@@ -1,4 +1,10 @@
-import type { RibltMessage } from "riblt";
+import {
+  createRiblt,
+  type RibltDecodeResult,
+  type RibltMessage,
+  type RibltOptions,
+  type RibltSessionApi,
+} from "riblt";
 
 export const ORP_PROTOCOL_VERSION = 1 as const;
 export const ORP_RIBLT_MESSAGE_VERSION = 1 as const;
@@ -17,6 +23,14 @@ export interface OrpParameters {
   symbolSize: number;
   batchSize: number;
   hashSeed: string;
+}
+
+export interface OrpRibltSessionApi {
+  add(ids: Iterable<string>): void;
+  createFrame(options?: { count?: number }): RibltMessage;
+  mergeFrame(frame: RibltMessage): void;
+  decode(): RibltDecodeResult;
+  reset(): void;
 }
 
 export interface DocSummary {
@@ -212,6 +226,28 @@ export type OrpMessage =
   | OrpSnapshotGetMessage
   | OrpSnapshotPutMessage;
 
+export type OrpFrameMessage =
+  | OrpInventoryFrameMessage
+  | OrpChunkFrameMessage
+  | OrpDocFrameMessage;
+
+export interface OrpRibltExchangeOptions<TFrame extends OrpFrameMessage> {
+  leftIds: Iterable<string>;
+  rightIds: Iterable<string>;
+  params: OrpParameters;
+  makeLeftFrame: (frame: RibltMessage) => TFrame;
+  makeRightFrame?: (frame: RibltMessage) => TFrame;
+  onLeftFrame?: (message: TFrame) => void;
+  onRightFrame?: (message: TFrame) => void;
+  roundLimit?: number;
+}
+
+export interface OrpRibltExchangeResult {
+  leftResult: RibltDecodeResult;
+  rightResult: RibltDecodeResult;
+  rounds: number;
+}
+
 export interface OrpValidationIssue {
   path: string;
   message: string;
@@ -240,7 +276,91 @@ export interface OrpTranscript {
   events: OrpTranscriptEvent[];
 }
 
+export const ORP_DEFAULT_ROUND_LIMIT = 128;
+
 const HEX_16 = /^[0-9a-f]{16}$/;
+
+export function orpParametersToRibltOptions(params: OrpParameters): RibltOptions {
+  return {
+    symbolSize: params.symbolSize,
+    batchSize: params.batchSize,
+    hashSeed: BigInt(`0x${params.hashSeed}`),
+  };
+}
+
+export function createOrpRibltSession(params: OrpParameters): OrpRibltSessionApi {
+  return new OrpRibltSession(params);
+}
+
+export function exchangeOrpRibltFrames<TFrame extends OrpFrameMessage>(
+  options: OrpRibltExchangeOptions<TFrame>
+): OrpRibltExchangeResult {
+  const left = createOrpRibltSession(options.params);
+  const right = createOrpRibltSession(options.params);
+  left.add(options.leftIds);
+  right.add(options.rightIds);
+
+  let leftResult = left.decode();
+  let rightResult = right.decode();
+  let rounds = 0;
+  const roundLimit = options.roundLimit ?? ORP_DEFAULT_ROUND_LIMIT;
+  const makeRightFrame = options.makeRightFrame ?? options.makeLeftFrame;
+
+  while (rounds < roundLimit) {
+    if (leftResult.status === "complete" && rightResult.status === "complete") {
+      return { leftResult, rightResult, rounds };
+    }
+    if (leftResult.status === "failed" || rightResult.status === "failed") {
+      throw new Error("ORP RIBLT exchange failed");
+    }
+
+    if (rightResult.status !== "complete") {
+      const message = options.makeLeftFrame(left.createFrame({ count: options.params.batchSize }));
+      options.onLeftFrame?.(message);
+      right.mergeFrame(message.frame);
+      rightResult = right.decode();
+    }
+
+    if (leftResult.status !== "complete") {
+      const message = makeRightFrame(right.createFrame({ count: options.params.batchSize }));
+      options.onRightFrame?.(message);
+      left.mergeFrame(message.frame);
+      leftResult = left.decode();
+    }
+
+    rounds += 1;
+  }
+
+  throw new Error("ORP RIBLT exchange did not complete within the round limit");
+}
+
+class OrpRibltSession implements OrpRibltSessionApi {
+  private readonly riblt: RibltSessionApi;
+
+  constructor(params: OrpParameters) {
+    this.riblt = createRiblt(orpParametersToRibltOptions(params));
+  }
+
+  add(ids: Iterable<string>): void {
+    this.riblt.add(ids);
+  }
+
+  createFrame(options: { count?: number } = {}): RibltMessage {
+    return this.riblt.encode({ count: options.count, format: "object" }) as RibltMessage;
+  }
+
+  mergeFrame(frame: RibltMessage): void {
+    this.riblt.merge(frame);
+  }
+
+  decode(): RibltDecodeResult {
+    return this.riblt.decode();
+  }
+
+  reset(): void {
+    this.riblt.reset();
+  }
+}
 
 function exampleFrame(seed: string): RibltMessage {
   return {

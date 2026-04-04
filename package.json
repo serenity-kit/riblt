@@ -1,10 +1,20 @@
 {
   "name": "riblt-workspace",
   "private": true,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/serenity-kit/orp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/serenity-kit/orp/issues"
+  },
+  "homepage": "https://github.com/serenity-kit/orp#readme",
   "scripts": {
-    "build": "pnpm -r --filter './packages/*' build && pnpm -r --filter './examples/*' build",
+    "build": "pnpm -r --filter './packages/*' build && pnpm -r --filter './examples/*' build && pnpm --filter riblt-docs build",
+    "docs:build": "pnpm --filter riblt-docs build",
+    "docs:check": "pnpm --filter riblt-docs types:check",
     "test": "pnpm -r --filter './packages/*' test && pnpm -r --filter './examples/*' --if-present test",
-    "lint": "pnpm -r --filter './packages/*' lint && pnpm -r --filter './examples/*' lint",
+    "lint": "pnpm -r --filter './packages/*' lint && pnpm -r --filter './examples/*' lint && pnpm --filter riblt-docs types:check",
     "example": "pnpm --filter orp-demo-example start"
   },
   "devDependencies": {

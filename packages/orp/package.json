@@ -4,6 +4,14 @@
   "description": "Operation Reconciliation Protocol interfaces and validators.",
   "license": "MIT",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/serenity-kit/orp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/serenity-kit/orp/issues"
+  },
+  "homepage": "https://github.com/serenity-kit/orp/tree/main/packages/orp#readme",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -21,5 +29,12 @@
   },
   "dependencies": {
     "riblt": "workspace:*"
-  }
+  },
+  "keywords": [
+    "sync",
+    "reconciliation",
+    "anti-entropy",
+    "crdt",
+    "orp"
+  ]
 }

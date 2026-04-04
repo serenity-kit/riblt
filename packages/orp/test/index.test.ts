@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
+  ORP_PROTOCOL_VERSION,
   ORP_EXAMPLE_TRANSCRIPTS,
   OrpValidationError,
   assertValidChunkSummary,
   assertValidOrpMessage,
+  createOrpRibltSession,
+  exchangeOrpRibltFrames,
   validateChunkSummary,
   validateDocSummary,
   validateOrpMessage,
@@ -146,5 +149,72 @@ describe("orp validators", () => {
         expect.objectContaining({ path: "$.chunking.summaries[0].opCount" }),
       ])
     );
+  });
+});
+
+describe("orp riblt helpers", () => {
+  const params = {
+    symbolSize: 64,
+    batchSize: 2,
+    hashSeed: "0000000000000007",
+  } as const;
+
+  it("wraps riblt with object-frame sessions", () => {
+    const alice = createOrpRibltSession(params);
+    const bob = createOrpRibltSession(params);
+    alice.add(["id-1", "id-2", "alice-only"]);
+    bob.add(["id-1", "id-2", "bob-only"]);
+
+    let result = bob.decode();
+    let rounds = 0;
+    while (result.status !== "complete" && rounds < 32) {
+      const frame = alice.createFrame();
+      bob.mergeFrame(frame);
+      result = bob.decode();
+      rounds += 1;
+    }
+
+    expect(result.status).toBe("complete");
+    expect(result.missing).toEqual(["alice-only"]);
+    expect(result.extra).toEqual(["bob-only"]);
+  });
+
+  it("exchanges ORP frame messages symmetrically", () => {
+    const sentTypes: string[] = [];
+
+    const { leftResult, rightResult, rounds } = exchangeOrpRibltFrames({
+      leftIds: ["id-1", "id-2", "left-only"],
+      rightIds: ["id-1", "id-2", "right-only"],
+      params,
+      makeLeftFrame: (frame) => ({
+        type: "orp/doc-frame",
+        version: ORP_PROTOCOL_VERSION,
+        sessionId: "session-1",
+        docHandle: "doc-1",
+        frame,
+      }),
+      makeRightFrame: (frame) => ({
+        type: "orp/doc-frame",
+        version: ORP_PROTOCOL_VERSION,
+        sessionId: "session-1",
+        docHandle: "doc-1",
+        frame,
+      }),
+      onLeftFrame: (message) => {
+        sentTypes.push(message.type);
+      },
+      onRightFrame: (message) => {
+        sentTypes.push(message.type);
+      },
+    });
+
+    expect(rounds).toBeGreaterThan(0);
+    expect(leftResult.status).toBe("complete");
+    expect(rightResult.status).toBe("complete");
+    expect(leftResult.missing).toEqual(["right-only"]);
+    expect(leftResult.extra).toEqual(["left-only"]);
+    expect(rightResult.missing).toEqual(["left-only"]);
+    expect(rightResult.extra).toEqual(["right-only"]);
+    expect(sentTypes.every((type) => type === "orp/doc-frame")).toBe(true);
   });
 });
