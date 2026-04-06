@@ -125,6 +125,44 @@ The session layer owns the protocol phases:
 
 `OrpSession#getState()` exposes coarse session progress so a caller can surface current phase and completed documents without inspecting internal transcript details.
 
+### `OrpEndpointSession`
+
+For real transports, the package also exposes an incremental endpoint runtime.
+
+It represents one peer at a time:
+
+- `start()` emits the first outbound messages
+- `receive(message)` consumes one inbound ORP message and returns the next outbound messages plus state/events
+- `snapshot()` and `OrpEndpointSession.restore()` let you resume an in-flight session
+
+```ts
+import { createOrpEndpointSession, OrpEndpointSession } from "@riblt/orp";
+
+const initiator = createOrpEndpointSession(localAdapter, {
+  role: "initiator",
+  sessionId: "session-1",
+  scopeId: "tenant-42",
+  inventoryParams: params,
+  operationParams: params,
+});
+
+for (const message of initiator.start()) {
+  transport.send(message);
+}
+
+transport.onMessage((message) => {
+  const step = initiator.receive(message);
+  for (const outbound of step.messages) {
+    transport.send(outbound);
+  }
+});
+
+const saved = initiator.snapshot();
+const restored = OrpEndpointSession.restore(localAdapter, saved);
+```
+
+Use `OrpEndpointSession` when peers run on different machines or when the application needs explicit control over retries, persistence, and network pacing.
+
 ### Transcripts
 
 The package ships with `ORP_EXAMPLE_TRANSCRIPTS`, which show:
