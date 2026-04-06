@@ -3,7 +3,7 @@ title: orp
 description: The Operation Reconciliation Protocol package and API surface.
 ---
 
-`@riblt/orp` is the package layer for the Operation Reconciliation Protocol. It provides a transport-neutral TypeScript surface for ORP message types, validation helpers, and example transcripts on top of `riblt`.
+`@riblt/orp` is the package layer for the Operation Reconciliation Protocol. It provides a transport-neutral TypeScript surface for ORP message types, validation helpers, reusable `riblt` frame exchange helpers, and a session API that orchestrates inventory, chunk, snapshot, and operation repair flows on top of `riblt`.
 
 ## Installation
 
@@ -21,36 +21,48 @@ ORP is meant for applications where:
 - you want exact repair without Merkle trees or checkpoint feeds
 - you may want an optional chunk layer between document inventory and single-op repair
 
-The package gives you the wire model and runtime guards. It does not impose a transport or a specific CRDT.
+The package gives you the wire model, runtime guards, and reusable orchestration primitives. It does not impose a transport or a specific CRDT.
 
-## Basic Example
+## Session Example
 
 ```ts
 import {
-  ORP_EXAMPLE_TRANSCRIPTS,
-  assertValidOrpMessage,
-  type OrpHelloMessage,
+  OrpSession,
+  type OrpParameters,
+  type OrpPeerAdapter,
 } from "@riblt/orp";
 
-const hello: OrpHelloMessage = {
-  type: "orp/hello",
-  version: 1,
-  sessionId: "orp-demo-session",
-  scopeId: "tenant-42",
-  inventoryParams: {
-    symbolSize: 64,
-    batchSize: 4,
-    hashSeed: "0000000000000007",
-  },
-  operationParams: {
-    symbolSize: 64,
-    batchSize: 4,
-    hashSeed: "0000000000000007",
-  },
+const params: OrpParameters = {
+  symbolSize: 64,
+  batchSize: 4,
+  hashSeed: "0000000000000007",
 };
 
-assertValidOrpMessage(hello);
-console.log(ORP_EXAMPLE_TRANSCRIPTS[0].name);
+declare const initiator: OrpPeerAdapter;
+declare const responder: OrpPeerAdapter;
+
+const session = new OrpSession(initiator, responder, {
+  sessionId: "session-1",
+  scopeId: "tenant-42",
+  inventoryParams: params,
+  operationParams: params,
+  chunkTransferThreshold: 4,
+  snapshotTailCountThreshold: 12,
+});
+
+const result = session.run();
+console.log(result.differingDocs);
+console.log(result.documents);
+```
+
+The adapter methods keep storage and transport outside the package. `OrpSession` only needs inventory, document views, snapshot access, and blob/chunk application hooks.
+
+## Low-Level Example
+
+If you only want the ORP `riblt` frame helpers, the lower-level surface still exists:
+
+```ts
+import { createOrpRibltSession, exchangeOrpRibltFrames } from "@riblt/orp";
 ```
 
 ## Main Concepts
@@ -100,12 +112,64 @@ An ORP session carries two `riblt` parameter sets:
 - `inventoryParams`: used for document summary reconciliation
 - `operationParams`: used for per-document operation reconciliation
 
+### `OrpSession`
+
+The session layer owns the protocol phases:
+
+- `orp/hello`
+- inventory reconciliation
+- per-document open and status exchange
+- optional chunk reconciliation
+- optional snapshot fast path
+- operation id repair and blob transfer
+
+`OrpSession#getState()` exposes coarse session progress so a caller can surface current phase and completed documents without inspecting internal transcript details.
+
+### `OrpEndpointSession`
+
+For real transports, the package also exposes an incremental endpoint runtime.
+
+It represents one peer at a time:
+
+- `start()` emits the first outbound messages
+- `receive(message)` consumes one inbound ORP message and returns the next outbound messages plus state/events
+- `snapshot()` and `OrpEndpointSession.restore()` let you resume an in-flight session
+
+```ts
+import { createOrpEndpointSession, OrpEndpointSession } from "@riblt/orp";
+
+const initiator = createOrpEndpointSession(localAdapter, {
+  role: "initiator",
+  sessionId: "session-1",
+  scopeId: "tenant-42",
+  inventoryParams: params,
+  operationParams: params,
+});
+
+for (const message of initiator.start()) {
+  transport.send(message);
+}
+
+transport.onMessage((message) => {
+  const step = initiator.receive(message);
+  for (const outbound of step.messages) {
+    transport.send(outbound);
+  }
+});
+
+const saved = initiator.snapshot();
+const restored = OrpEndpointSession.restore(localAdapter, saved);
+```
+
+Use `OrpEndpointSession` when peers run on different machines or when the application needs explicit control over retries, persistence, and network pacing.
+
 ### Transcripts
 
 The package ships with `ORP_EXAMPLE_TRANSCRIPTS`, which show:
 
 - inventory reconciliation over document summaries
 - chunk reconciliation over deterministic buckets
+- snapshot transfer for large divergence
 - per-document repair over operation ids
 - blob or chunk transfer for missing data
 
@@ -137,6 +201,14 @@ Each message includes:
 
 The `frame` fields use object-format `riblt` messages so they are JSON-friendly by default.
 
+## Runtime Helpers
+
+For ORP transports that want the workspace object-frame format directly, the package also exports:
+
+- `createOrpRibltSession()`
+- `exchangeOrpRibltFrames()`
+- `orpParametersToRibltOptions()`
+
 ## Runtime Validation
 
 The package exports:
@@ -153,9 +225,60 @@ Validation checks cover:
 - protocol version
 - required message fields
 - `hashSeed` formatting
+- digest and base64 payload formatting
 - document summary shape
 - chunk summary shape
 - `riblt` frame shape
+- message array limits
+
+## Production Guidance
+
+### Binary vs Object Frames
+
+Use object frames when:
+
+- your transport is JSON-first
+- you want transcript logging and debugging without a binary side channel
+
+Use binary frames when:
+
+- you control both peers
+- frame overhead matters more than inspectability
+- you are bridging to another runtime using the committed interop fixtures
+
+### Chunk Repair vs Op Repair
+
+The default session logic uses chunk transfer when the estimated operations behind the differing chunks are at least `chunkTransferThreshold`.
+
+Use a lower threshold when:
+
+- op payloads are large
+- many operations tend to share the same deterministic buckets
+
+Use a higher threshold when:
+
+- chunk blobs are expensive to materialize
+- most diffs are only one or two operations
+
+### Snapshot Fast Path
+
+The session prefers `snapshot-get` / `snapshot-put` when a peer advertises a recent snapshot and its tail is already large enough to justify skipping direct per-op repair.
+
+Use snapshots when:
+
+- documents can diverge by many operations
+- replaying all missing op blobs is much more expensive than transferring one basis image plus a tail
+
+Avoid snapshots when:
+
+- snapshots are expensive to compute or store
+- most repairs are already small and cheap
+
+### Current Limits
+
+- ORP message arrays are capped at `65536` items
+- `riblt` object frames are validated against the same coded-symbol cap
+- `riblt` symbol size is capped at `4096` bytes in this implementation
 
 ## Relationship To The Spec
 
@@ -170,7 +293,8 @@ The workspace includes `examples/orp-demo`, which demonstrates:
 
 1. inventory reconciliation over document summaries
 2. deterministic chunk reconciliation over unordered op sets
-3. per-document operation reconciliation when chunk transfer is not worth it
-4. chunk or blob transfer, depending on the diff size
+3. snapshot transfer for large divergence
+4. per-document operation reconciliation when chunk transfer is not worth it
+5. chunk or blob transfer, depending on the diff size
 
-It uses a simple grow-only set CRDT, deterministic hash buckets, and keeps snapshots disabled so the flow stays small and readable.
+It uses a simple grow-only set CRDT, deterministic hash buckets, and synthetic snapshots so each protocol branch stays small and readable.

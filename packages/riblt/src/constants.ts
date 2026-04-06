@@ -1,6 +1,8 @@
 export const LENGTH_BYTES = 4;
 export const DEFAULT_SYMBOL_SIZE = 64;
 export const DEFAULT_BATCH_SIZE = 1;
+export const MAX_SYMBOL_SIZE = 4096;
+export const MAX_CODED_SYMBOLS = 65536;
 export const HASH_ID = "xxh3-128" as const;
 export const VERSION = 1 as const;
 export const MASK_64 = (1n << 64n) - 1n;

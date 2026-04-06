@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createRiblt } from "../src/index";
+import { RIBLT_MAX_CODED_SYMBOLS, RIBLT_MAX_SYMBOL_SIZE, createRiblt } from "../src/index";
 import { Buffer } from "node:buffer";
 
 const aliceOnly = ["alice-only-1", "alice-only-2"];
@@ -181,10 +181,20 @@ describe("riblt api behavior", () => {
     expect(() => riblt.add(["toolong-id"])).toThrow(/symbolSize too small/);
   });
 
+  it("rejects symbol sizes above the hard limit", () => {
+    expect(() => createRiblt({ symbolSize: RIBLT_MAX_SYMBOL_SIZE + 1, hashSeed: 0n })).toThrow(/symbolSize/);
+  });
+
   it("throws on invalid encode count", () => {
     const riblt = createRiblt({ symbolSize: 64, hashSeed: 0n });
     riblt.add(["id-1"]);
     expect(() => riblt.encode({ count: 0 })).toThrow(/count must be a positive integer/);
+  });
+
+  it("rejects encode counts above the hard limit", () => {
+    const riblt = createRiblt({ symbolSize: 64, hashSeed: 0n });
+    riblt.add(["id-1"]);
+    expect(() => riblt.encode({ count: RIBLT_MAX_CODED_SYMBOLS + 1 })).toThrow(/count must be a positive integer/);
   });
 
   it("rejects incompatible symbol size", () => {
@@ -222,6 +232,34 @@ describe("riblt api behavior", () => {
     bad[0] = 255;
 
     expect(() => bob.merge(bad)).toThrow(/unsupported message version/);
+    expect(bob.decode().status).toBe("failed");
+  });
+
+  it("marks the session failed on invalid object messages", () => {
+    const alice = createRiblt({ symbolSize: 64, hashSeed: 0n });
+    const bob = createRiblt({ symbolSize: 64, hashSeed: 0n });
+    alice.add(["id-1"]);
+    bob.add(["id-2"]);
+
+    const message = alice.encode({ count: 1, format: "object" }) as {
+      v: number;
+      hash: string;
+      symbolSize: number;
+      seed: string;
+      coded: Array<{ count: number; hash: string; symbol: string }>;
+    };
+    const bad = {
+      ...message,
+      coded: [
+        {
+          ...message.coded[0],
+          hash: "zz",
+        },
+      ],
+    };
+
+    expect(() => bob.merge(bad as never)).toThrow();
+    expect(bob.decode().status).toBe("failed");
   });
 
   it("can reset and reuse", () => {
@@ -257,5 +295,39 @@ describe("riblt api behavior", () => {
     expect(result.status).toBe("complete");
     expect(result.missing).toEqual([]);
     expect(result.extra).toEqual(["id-4"]);
+  });
+
+  it("reports observability stats", () => {
+    const alice = createRiblt({ symbolSize: 64, hashSeed: 0n, batchSize: 2 });
+    const bob = createRiblt({ symbolSize: 64, hashSeed: 0n, batchSize: 2 });
+    alice.add(["id-1", "id-2", "alice-only"]);
+    bob.add(["id-1", "id-2", "bob-only"]);
+
+    expect(bob.stats()).toEqual(
+      expect.objectContaining({
+        status: "incomplete",
+        encodedSymbols: 0,
+        receivedSymbols: 0,
+        decodeProgress: 0,
+      })
+    );
+
+    let result = bob.decode();
+    for (let round = 0; round < 8; round += 1) {
+      bob.merge(alice.encode({ count: 2 }));
+      result = bob.decode();
+      if (result.status === "complete") {
+        break;
+      }
+    }
+    const stats = bob.stats();
+
+    expect(result.status).toBe("complete");
+    expect(stats.status).toBe("complete");
+    expect(stats.receivedSymbols).toBeGreaterThanOrEqual(2);
+    expect(stats.encodedSymbols).toBe(0);
+    expect(stats.decodeProgress).toBe(1);
+    expect(stats.missingCount).toBe(1);
+    expect(stats.extraCount).toBe(1);
   });
 });

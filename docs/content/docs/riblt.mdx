@@ -52,6 +52,7 @@ Supported options:
 - `encode({ count, format })`: produce the next coded symbols as binary or object data.
 - `merge(message)`: apply coded symbols received from the other peer.
 - `decode()`: inspect the current reconciliation state.
+- `stats()`: inspect low-level session progress and failure metadata.
 - `reset()`: clear the session and reuse the instance.
 
 ## Decode States
@@ -76,6 +77,15 @@ The result object always has:
 
 Use the object format when building protocols or debugging by hand. Use the binary format if you control the transport and want lower overhead.
 
+`stats()` exposes:
+
+- encoded symbol count
+- received symbol count
+- decoded symbol count
+- current decode progress
+- missing and extra counts
+- failure reason when the session moved to `failed`
+
 ## Compatibility Rules
 
 Both peers must use the same:
@@ -87,12 +97,16 @@ Both peers must use the same:
 
 If a peer receives incompatible data, the session moves to `failed`.
 
+Malformed remote frames also move the session to `failed`. This makes transport-layer handling explicit and avoids silently continuing after incompatible input.
+
 ## Constraints
 
 - Identifiers are currently strings.
 - The first 4 bytes of each symbol store the UTF-8 byte length.
 - With the default `symbolSize` of `64`, ids longer than `60` UTF-8 bytes throw.
 - You cannot call `add()` after encoding or merging has started.
+- `symbolSize` is capped at `4096` bytes.
+- each encoded frame is capped at `65536` coded symbols.
 
 ## When To Use riblt Directly
 
@@ -104,3 +118,22 @@ Use `riblt` directly when:
 - you are integrating with a non-browser or non-HTTP stack
 
 If you want a higher-level document and operation reconciliation workflow, use [orp](/docs/orp).
+
+## Interop Fixtures
+
+The workspace ships golden vectors in `packages/riblt/test/fixtures/interop-v1.json`. They pin:
+
+- object-format frames
+- binary frames
+- a complete streamed reconciliation transcript
+
+Use those fixtures when building another implementation that targets the same workspace wire format.
+
+The repo also includes a second-runtime verifier:
+
+```sh
+python3 -m pip install -r interop/requirements.txt
+python3 interop/python_verify.py
+```
+
+That harness proves the committed vectors from Python, not only from the TypeScript implementation itself.

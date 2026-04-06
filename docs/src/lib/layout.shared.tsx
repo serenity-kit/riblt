@@ -2,7 +2,7 @@ import type { BaseLayoutProps } from 'fumadocs-ui/layouts/shared';
 
 export const gitConfig = {
   user: 'serenity-kit',
-  repo: 'riblt',
+  repo: 'orp',
   branch: 'main',
 };
 

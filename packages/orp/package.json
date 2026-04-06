@@ -1,9 +1,17 @@
 {
   "name": "@riblt/orp",
   "version": "0.0.1",
-  "description": "Operation Reconciliation Protocol interfaces and validators.",
+  "description": "Operation Reconciliation Protocol session helpers, message types, and validators.",
   "license": "MIT",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/serenity-kit/orp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/serenity-kit/orp/issues"
+  },
+  "homepage": "https://github.com/serenity-kit/orp/tree/main/packages/orp#readme",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -13,6 +21,9 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "sideEffects": false,
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "tsup src/index.ts --dts --format esm --clean",
     "test": "vitest run --config vitest.config.ts",
@@ -21,5 +32,12 @@
   },
   "dependencies": {
     "riblt": "workspace:*"
-  }
+  },
+  "keywords": [
+    "sync",
+    "reconciliation",
+    "anti-entropy",
+    "crdt",
+    "orp"
+  ]
 }

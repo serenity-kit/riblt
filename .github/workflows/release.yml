@@ -1,0 +1,64 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Run publish as a dry run"
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6.0.1
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4.4.0
+        with:
+          version: 10
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6.1.0
+        with:
+          node-version: 24
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Validate workspace
+        run: |
+          pnpm test
+          pnpm lint
+          pnpm build
+
+      - name: Publish riblt dry run
+        if: ${{ inputs.dry_run }}
+        run: pnpm --filter riblt publish --access public --no-git-checks --dry-run
+
+      - name: Publish @riblt/orp dry run
+        if: ${{ inputs.dry_run }}
+        run: pnpm --filter @riblt/orp publish --access public --no-git-checks --dry-run
+
+      - name: Publish riblt
+        if: ${{ !inputs.dry_run }}
+        run: pnpm --filter riblt publish --access public --no-git-checks --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publish @riblt/orp
+        if: ${{ !inputs.dry_run }}
+        run: pnpm --filter @riblt/orp publish --access public --no-git-checks --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

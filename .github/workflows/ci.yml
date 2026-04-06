@@ -4,7 +4,7 @@ on:
   push:
     branches:
       - main
-      - "**"
+  pull_request:
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -110,3 +110,25 @@ jobs:
 
       - name: Check docs types
         run: pnpm --filter riblt-docs types:check
+
+      - name: Build docs
+        run: pnpm --filter riblt-docs build
+
+  interop:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6.0.1
+
+      - name: Set up Python
+        uses: actions/setup-python@v6.0.0
+        with:
+          python-version: "3.11"
+
+      - name: Install Python dependencies
+        run: python -m pip install -r interop/requirements.txt
+
+      - name: Verify cross-runtime fixtures
+        run: python interop/python_verify.py

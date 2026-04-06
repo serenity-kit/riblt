@@ -2,11 +2,18 @@ import { afterAll, bench, describe } from "vitest";
 import { createRiblt } from "../src/index";
 
 const cases = [
-  { name: "d=10", diff: 10 },
-  { name: "d=20", diff: 20 },
-  { name: "d=40", diff: 40 },
-  { name: "d=100", diff: 100 },
-  { name: "d=1000", diff: 1000 },
+  { name: "d=10,b=1", diff: 10, batchSize: 1 },
+  { name: "d=10,b=2", diff: 10, batchSize: 2 },
+  { name: "d=10,b=4", diff: 10, batchSize: 4 },
+  { name: "d=40,b=1", diff: 40, batchSize: 1 },
+  { name: "d=40,b=2", diff: 40, batchSize: 2 },
+  { name: "d=40,b=4", diff: 40, batchSize: 4 },
+  { name: "d=100,b=1", diff: 100, batchSize: 1 },
+  { name: "d=100,b=2", diff: 100, batchSize: 2 },
+  { name: "d=100,b=4", diff: 100, batchSize: 4 },
+  { name: "d=1000,b=1", diff: 1000, batchSize: 1 },
+  { name: "d=1000,b=2", diff: 1000, batchSize: 2 },
+  { name: "d=1000,b=4", diff: 1000, batchSize: 4 },
 ];
 
 const ratios = new Map<string, number>();
@@ -19,13 +26,13 @@ function buildIds(prefix: string, count: number) {
   return ids;
 }
 
-function runOnce(diff: number) {
+function runOnce(diff: number, batchSize: number) {
   const nLocal = Math.floor(diff / 2);
   const nRemote = diff - nLocal;
   const nCommon = diff;
 
-  const alice = createRiblt({ symbolSize: 64, hashSeed: 0n, batchSize: 1 });
-  const bob = createRiblt({ symbolSize: 64, hashSeed: 0n, batchSize: 1 });
+  const alice = createRiblt({ symbolSize: 64, hashSeed: 0n, batchSize });
+  const bob = createRiblt({ symbolSize: 64, hashSeed: 0n, batchSize });
 
   const local = buildIds("local", nLocal);
   const remote = buildIds("remote", nRemote);
@@ -36,10 +43,10 @@ function runOnce(diff: number) {
 
   let coded = 0;
   let result = bob.decode();
-  const maxSymbols = diff * 10;
+  const maxSymbols = diff * 12;
   while (result.status !== "complete") {
-    bob.merge(alice.encode({ count: 1 }));
-    coded += 1;
+    bob.merge(alice.encode({ count: batchSize }));
+    coded += batchSize;
     result = bob.decode();
     if (coded > maxSymbols) {
       throw new Error(`decode did not converge after ${coded} symbols`);
@@ -51,10 +58,14 @@ function runOnce(diff: number) {
 
 describe("riblt overhead", () => {
   for (const tc of cases) {
-    bench(tc.name, () => {
-      const ratio = runOnce(tc.diff);
-      ratios.set(tc.name, ratio);
-    }, { iterations: tc.diff >= 1000 ? 5 : 10 });
+    bench(
+      tc.name,
+      () => {
+        const ratio = runOnce(tc.diff, tc.batchSize);
+        ratios.set(tc.name, ratio);
+      },
+      { iterations: tc.diff >= 1000 ? 5 : 10 }
+    );
   }
 });
 

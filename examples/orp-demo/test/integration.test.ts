@@ -49,6 +49,23 @@ describe("orp demo integration", () => {
     expect(sortedState(result.initiator)).toEqual(sortedState(result.responder));
   });
 
+  it("uses snapshot transfer when the divergence is large", () => {
+    const initiatorSeed: DemoSeed = [
+      { docHandle: "doc-snapshot", values: ["v-1"] },
+    ];
+    const responderSeed: DemoSeed = [
+      { docHandle: "doc-snapshot", values: ["v-1", "v-2", "v-3", "v-4", "v-5", "v-6", "v-7"] },
+    ];
+
+    const result = runDemoScenario(initiatorSeed, responderSeed);
+    const messageTypes = result.transcript.map((entry) => entry.message.type);
+
+    expect(messageTypes).toContain("orp/snapshot-get");
+    expect(messageTypes).toContain("orp/snapshot-put");
+    expect(messageTypes).not.toContain("orp/doc-frame");
+    expect(sortedState(result.initiator)).toEqual(sortedState(result.responder));
+  });
+
   it("is idempotent when both peers already match", () => {
     const seed: DemoSeed = [
       { docHandle: "doc-same", values: ["one", "two", "three"] },

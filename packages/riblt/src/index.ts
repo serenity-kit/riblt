@@ -3,6 +3,8 @@ import {
   DEFAULT_SYMBOL_SIZE,
   HASH_ID,
   LENGTH_BYTES,
+  MAX_CODED_SYMBOLS,
+  MAX_SYMBOL_SIZE,
   MASK_64,
   RANDOM_MAPPING_MULTIPLIER,
   UINT32_FLOAT,
@@ -29,6 +31,20 @@ export interface RibltDecodeResult {
   status: RibltStatus;
   missing: string[];
   extra: string[];
+}
+
+export interface RibltStats {
+  status: RibltStatus;
+  symbolSize: number;
+  batchSize: number;
+  encodedSymbols: number;
+  receivedSymbols: number;
+  totalCodedSymbols: number;
+  decodedSymbols: number;
+  decodeProgress: number;
+  missingCount: number;
+  extraCount: number;
+  failureReason?: string;
 }
 
 export interface RibltOptions {
@@ -66,6 +82,7 @@ export interface RibltSessionApi {
   encode(options?: { count?: number; format?: "binary" | "object" }): Uint8Array | RibltMessage;
   merge(message: Uint8Array | RibltMessage): void;
   decode(): RibltDecodeResult;
+  stats(): RibltStats;
   reset(): void;
 }
 
@@ -73,6 +90,8 @@ export const RIBLT_DEFAULT_SYMBOL_SIZE = DEFAULT_SYMBOL_SIZE;
 export const RIBLT_DEFAULT_BATCH_SIZE = DEFAULT_BATCH_SIZE;
 export const RIBLT_MESSAGE_VERSION = VERSION;
 export const RIBLT_HASH_ID = HASH_ID;
+export const RIBLT_MAX_SYMBOL_SIZE = MAX_SYMBOL_SIZE;
+export const RIBLT_MAX_CODED_SYMBOLS = MAX_CODED_SYMBOLS;
 
 interface HashedSymbol {
   symbol: Uint8Array;
@@ -284,12 +303,19 @@ export function resolveRibltOptions(options: RibltOptions = {}): ResolvedRibltOp
   if (symbolSize <= LENGTH_BYTES) {
     throw new Error("symbolSize must be larger than the length prefix");
   }
+  if (symbolSize > MAX_SYMBOL_SIZE) {
+    throw new Error(`symbolSize must be <= ${MAX_SYMBOL_SIZE}`);
+  }
+  const batchSize = options.batchSize ?? estimateBatchSize(options.expectedDiff, options.errorRate);
+  if (!Number.isInteger(batchSize) || batchSize <= 0 || batchSize > MAX_CODED_SYMBOLS) {
+    throw new Error(`batchSize must be a positive integer <= ${MAX_CODED_SYMBOLS}`);
+  }
 
   return {
     symbolSize,
     expectedDiff: options.expectedDiff,
     errorRate: options.errorRate,
-    batchSize: options.batchSize ?? estimateBatchSize(options.expectedDiff, options.errorRate),
+    batchSize,
     hashSeed: options.hashSeed ?? 0n,
   };
 }
@@ -307,6 +333,8 @@ class RibltSession implements RibltSessionApi {
   private started = false;
   private failed = false;
   private received = 0;
+  private encoded = 0;
+  private failureReason?: string;
 
   constructor(options: ResolvedRibltOptions) {
     this.symbolSize = options.symbolSize;
@@ -331,13 +359,14 @@ class RibltSession implements RibltSessionApi {
   encode(options: { count?: number; format?: "binary" | "object" } = {}): Uint8Array | RibltMessage {
     this.started = true;
     const count = options.count ?? this.batchSize;
-    if (!Number.isInteger(count) || count <= 0) {
-      throw new Error("count must be a positive integer");
+    if (!Number.isInteger(count) || count <= 0 || count > MAX_CODED_SYMBOLS) {
+      throw new Error(`count must be a positive integer <= ${MAX_CODED_SYMBOLS}`);
     }
     const codedSymbols: CodedSymbol[] = [];
     for (let i = 0; i < count; i += 1) {
       codedSymbols.push(this.encoder.produceNextCodedSymbol());
     }
+    this.encoded += codedSymbols.length;
     if (options.format === "object") {
       return encodeMessageObject(this.symbolSize, this.hashSeed, codedSymbols);
     }
@@ -369,16 +398,51 @@ class RibltSession implements RibltSessionApi {
     return { status: "incomplete", missing, extra };
   }
 
+  stats(): RibltStats {
+    const totalCodedSymbols = this.decoder.cs.length;
+    const decodedSymbols = this.decoder.decoded;
+    const missingCount = this.decoder.remote.symbols.length;
+    const extraCount = this.decoder.local.symbols.length;
+    const status = this.failed
+      ? "failed"
+      : this.received === 0
+        ? "incomplete"
+        : this.decoder.decodedAll()
+          ? "complete"
+          : "incomplete";
+
+    return {
+      status,
+      symbolSize: this.symbolSize,
+      batchSize: this.batchSize,
+      encodedSymbols: this.encoded,
+      receivedSymbols: this.received,
+      totalCodedSymbols,
+      decodedSymbols,
+      decodeProgress: totalCodedSymbols === 0 ? 0 : decodedSymbols / totalCodedSymbols,
+      missingCount,
+      extraCount,
+      failureReason: this.failureReason,
+    };
+  }
+
   reset(): void {
     this.encoder.reset();
     this.decoder.reset();
     this.started = false;
     this.failed = false;
     this.received = 0;
+    this.encoded = 0;
+    this.failureReason = undefined;
   }
 
   private mergeBinary(message: Uint8Array): void {
-    const decoded = decodeMessageBinary(message);
+    let decoded: ReturnType<typeof decodeMessageBinary>;
+    try {
+      decoded = decodeMessageBinary(message);
+    } catch (error) {
+      this.fail(error);
+    }
     this.ensureCompatible(decoded.symbolSize, decoded.seed);
     for (const coded of decoded.codedSymbols) {
       this.decoder.addCodedSymbol(coded);
@@ -388,29 +452,52 @@ class RibltSession implements RibltSessionApi {
 
   private mergeObject(message: RibltMessage): void {
     if (message.v !== VERSION || message.hash !== HASH_ID) {
-      throw new Error("unsupported message format");
+      this.fail("unsupported message format");
     }
-    const seed = seedFromHex(message.seed);
+    if (!Number.isInteger(message.symbolSize) || message.symbolSize <= LENGTH_BYTES || message.symbolSize > MAX_SYMBOL_SIZE) {
+      this.fail(`symbolSize must be > ${LENGTH_BYTES} and <= ${MAX_SYMBOL_SIZE}`);
+    }
+    if (!Array.isArray(message.coded) || message.coded.length > MAX_CODED_SYMBOLS) {
+      this.fail(`coded must be an array with at most ${MAX_CODED_SYMBOLS} entries`);
+    }
+    let seed: bigint;
+    try {
+      seed = seedFromHex(message.seed);
+    } catch (error) {
+      this.fail(error);
+    }
     this.ensureCompatible(message.symbolSize, seed);
-    for (const coded of message.coded) {
-      this.decoder.addCodedSymbol({
-        symbol: base64ToBytes(coded.symbol, message.symbolSize),
-        hash: hashFromHex(coded.hash),
-        count: coded.count,
-      });
+    try {
+      for (const coded of message.coded) {
+        this.decoder.addCodedSymbol({
+          symbol: base64ToBytes(coded.symbol, message.symbolSize),
+          hash: hashFromHex(coded.hash),
+          count: coded.count,
+        });
+      }
+    } catch (error) {
+      this.fail(error);
     }
     this.received += message.coded.length;
   }
 
   private ensureCompatible(symbolSize: number, seed: bigint): void {
     if (symbolSize !== this.symbolSize) {
-      this.failed = true;
-      throw new Error("symbolSize mismatch between peers");
+      this.fail("symbolSize mismatch between peers");
     }
     if ((seed & MASK_64) !== (this.hashSeed & MASK_64)) {
-      this.failed = true;
-      throw new Error("hash seed mismatch between peers");
+      this.fail("hash seed mismatch between peers");
     }
+  }
+
+  private fail(error: unknown): never {
+    this.failed = true;
+    if (error instanceof Error) {
+      this.failureReason = error.message;
+      throw error;
+    }
+    this.failureReason = String(error);
+    throw new Error(this.failureReason);
   }
 }
 
@@ -529,7 +616,13 @@ function decodeMessageBinary(message: Uint8Array): {
     throw new Error("unsupported message version");
   }
   const symbolSize = view.getUint16(2, true);
+  if (symbolSize <= LENGTH_BYTES || symbolSize > MAX_SYMBOL_SIZE) {
+    throw new Error(`symbolSize must be > ${LENGTH_BYTES} and <= ${MAX_SYMBOL_SIZE}`);
+  }
   const count = view.getUint32(4, true);
+  if (count > MAX_CODED_SYMBOLS) {
+    throw new Error(`coded symbol count must be <= ${MAX_CODED_SYMBOLS}`);
+  }
   const seed = readUint64LE(view, 8);
   const codedSize = 4 + 16 + symbolSize;
   const expectedSize = headerSize + count * codedSize;

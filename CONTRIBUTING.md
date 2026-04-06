@@ -4,6 +4,7 @@
 
 ```bash
 pnpm build
+pnpm docs:check
 pnpm example
 ```
 
